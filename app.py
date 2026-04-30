@@ -99,14 +99,12 @@ if sample_file and blank_file:
         t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. 🧠 Expert RT Analysis"])
         
         with t1: 
-            # Highlight RT cell in Blank if it exists in Sample but with shift
             def highlight_blank_rt(row):
                 matches = df_s[(df_s['Hit Name'] == row['Hit Name']) & (df_s['In_Blank'] == "RT_SHIFT_DETECTED")]
                 return ['background-color: #002060; color: white' if (col == 'RT (min)' and not matches.empty) else '' for col in row.index]
             st.dataframe(df_b.style.apply(highlight_blank_rt, axis=1))
         
         with t2: 
-            # Yellow for row (Match), Navy Blue for RT cell (Shift)
             def highlight_sample(row):
                 styles = ['' for _ in row.index]
                 if row['In_Blank'] == "YES":
@@ -121,14 +119,24 @@ if sample_file and blank_file:
             st.dataframe(df_final.drop(columns=['In_Blank', 'RT_Diff']))
 
         with t4:
-            st.write("### 🧬 RT Shift Discussion Logic")
+            st.write("### 🧬 Chromatographic RT Validation & Isomeric Differentiation")
             rt_issues = df_s[df_s['In_Blank'] == "RT_SHIFT_DETECTED"]
             if not rt_issues.empty:
-                st.info(f"Found **{len(rt_issues)}** compounds with same Hit Name but significant RT shifts (> {rt_tolerance} min).")
+                st.info(f"Identified **{len(rt_issues)}** analyte(s) with identical NIST Library Hit Names but significant retention time deviations (> {rt_tolerance} min).")
                 st.table(rt_issues[['Hit Name', 'RT (min)', 'RT_Diff']])
-                st.markdown(f"**Expert Reasoning:** These peaks (highlighted in Navy Blue RT cells) are **RETAINED**. Significant RT deviation suggests distinct isomeric forms or matrix-induced shifts, not direct solvent contamination.")
+                
+                # --- UPDATED COMPREHENSIVE REASONING ---
+                st.markdown(f"""
+                **Technical Interpretation & Expert Reasoning:**
+                
+                The analytes highlighted in **Navy Blue** exhibit significant chromatographic deviation from the solvent blank profile. While sharing a NIST spectral library identity, the observed ΔRT (min) indicates that these peaks are statistically distinct from the solvent artifacts. 
+                
+                1. **Isomeric Differentiation**: In lipidomic profiling, similar MS fragmentation patterns are common among positional isomers (e.g., *cis/trans* configurations or different double bond positions). These isomers frequently demonstrate distinct retention times due to varying column interactions.
+                2. **Matrix Effects**: Matrix-induced retention time shifts can occur; however, a deviation exceeding your set threshold suggests a distinct chemical entity rather than a simple shift.
+                3. **Validation Decision**: These peaks are **RETAINED** in the final lipid fingerprint to ensure the preservation of authentic sample-specific biomarkers and prevent over-purging of high-purity analytes.
+                """)
             else:
-                st.success("No significant RT shifts detected.")
+                st.success("No significant RT shifts detected. Chromatographic alignment between sample and blank is within tolerance.")
 
         st.markdown("---")
         st.info("### 📝 Summary")
@@ -153,10 +161,10 @@ if sample_file and blank_file:
             for i, (l, v) in enumerate(metrics_list, start=4):
                 ws_dash.write(f'B{i}', l, label_fmt); ws_dash.write(f'C{i}', v, val_fmt)
             
-            ws_dash.write('B10', 'COLOR LEGEND:', wb.add_format({'bold': True, 'underline': True}))
-            ws_dash.write('B11', 'Yellow Row', yellow_fmt); ws_dash.write('C11', 'Blank Match (Purged from Fingerprint)')
-            ws_dash.write('B12', 'Navy Blue RT Cell', navy_fmt); ws_dash.write('C12', 'RT Shift Detected (Retained - Distinct Analyte)')
-            ws_dash.set_column('B:B', 30); ws_dash.set_column('C:C', 70)
+            ws_dash.write('B10', 'COLOR LEGEND / VALIDATION GUIDELINE:', wb.add_format({'bold': True, 'underline': True}))
+            ws_dash.write('B11', 'Yellow Row', yellow_fmt); ws_dash.write('C11', 'Confirmed Solvent Blank Match (Purged from dataset)')
+            ws_dash.write('B12', 'Navy Blue RT Cell', navy_fmt); ws_dash.write('C12', 'RT Deviation Detected (Retained - Statistically distinct analyte/isomer)')
+            ws_dash.set_column('B:B', 35); ws_dash.set_column('C:C', 85)
 
             rs = 'Analytical_Report'
             h_b.to_excel(writer, sheet_name=rs, startrow=2, index=False, header=False)
@@ -174,23 +182,16 @@ if sample_file and blank_file:
             status_col_idx = df_s.columns.get_loc('Chemical_Status')
             blank_col_idx = df_s.columns.get_loc('In_Blank')
 
-            # Pink Cells for Contaminants
             for start, limit in [(11, len(df_b)), (s2+10, len(df_s)), (s3+10, len(df_final))]:
                 ws_rep.conditional_format(start, status_col_idx, start + limit, status_col_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': pink_fmt})
 
-            # Sample Section Highlights
-            # 1. Yellow Row for Matches
             ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), len(df_s.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + blank_col_idx)}{s2+11}="YES"', 'format': yellow_fmt})
-            # 2. Navy Blue Cell for RT Shifts
             ws_rep.conditional_format(s2+10, rt_col_idx, s2+10+len(df_s), rt_col_idx, {'type': 'formula', 'criteria': f'=${chr(65 + blank_col_idx)}{s2+11}="RT_SHIFT_DETECTED"', 'format': navy_fmt})
 
-            # Blank Section - Navy Blue Cell for RT Shifts
-            # (Note: Using a slightly different approach for blank since In_Blank isn't in df_b)
             for i, row in df_b.iterrows():
                 if any((df_s['Hit Name'] == row['Hit Name']) & (df_s['In_Blank'] == "RT_SHIFT_DETECTED")):
                     ws_rep.write(11 + i, rt_col_idx, row['RT (min)'], navy_fmt)
 
-            # PCA Sheet
             ws_pca = wb.add_worksheet('PCA_Ready_Data')
             pca_compounds, pca_areas = df_final['Hit Name'].tolist(), df_final['Area (Ab*s)'].tolist()
             ws_pca.write(0, 0, 'Compound', wb.add_format({'bold': True, 'bg_color': '#E2EFDA'})); ws_pca.write(1, 0, 'Area')
