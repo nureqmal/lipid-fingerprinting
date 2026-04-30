@@ -29,10 +29,10 @@ rt_tolerance = st.sidebar.slider(
     help="Maximum retention time shift allowed for matching compounds."
 )
 
-# Slider 3: Area % Noise Filter
+# Slider 3: Area % Noise Filter (Default set to 0.00)
 area_threshold = st.sidebar.slider(
     "Min Area % (Noise Filter)", 
-    0.0, 5.0, 0.1, 0.1,
+    0.00, 5.00, 0.00, 0.01,
     help="Remove small peaks below this percentage of total area."
 )
 
@@ -41,7 +41,7 @@ st.markdown(f"""
 ### Standard Operating Procedure (SOP):
 1.  **Metadata Preservation**: Captures and retains original NIST headers (Rows 1–9) for full traceability.
 2.  **Quality Gate**: Filtering peaks with NIST Quality **≥ {q_threshold}**.
-3.  **Noise Reduction**: Removing baseline peaks with Area **< {area_threshold}%**.
+3.  **Noise Reduction**: Removing baseline peaks with Area **< {area_threshold:.2f}%**.
 4.  **RT-Aware Matching**: Matching compounds using Name + RT Tolerance (**±{rt_tolerance} min**).
 5.  **Strict Authentication**: Matched compounds are entirely purged to ensure a unique fingerprint.
 ---
