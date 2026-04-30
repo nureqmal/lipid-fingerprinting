@@ -73,7 +73,7 @@ if sample_file and blank_file:
             for _, t_row in matches.iterrows():
                 diff = abs(row['RT (min)'] - t_row['RT (min)'])
                 if diff <= tol:
-                    return "YES", diff # Exact match (Purge)
+                    return "YES", diff 
             
             closest_diff = matches.apply(lambda r: abs(row['RT (min)'] - r['RT (min)']), axis=1).min()
             return "RT_SHIFT_DETECTED", closest_diff
@@ -83,9 +83,10 @@ if sample_file and blank_file:
         df_s['In_Blank'] = [x[0] for x in res]
         df_s['RT_Diff'] = [x[1] for x in res]
 
-        # --- CRITICAL FIX: Retain both NO and RT_SHIFT_DETECTED ---
+        # --- RETAIN both NO and RT_SHIFT_DETECTED ---
         df_final = df_s[df_s['In_Blank'].isin(["NO", "RT_SHIFT_DETECTED"])].copy()
         
+        # Metrics Dashboard
         total_sample, excluded, final_count = len(df_s), len(df_s[df_s['In_Blank'] == "YES"]), len(df_final)
         purity = (final_count / total_sample * 100) if total_sample > 0 else 0
         
@@ -142,6 +143,25 @@ if sample_file and blank_file:
         class_counts.columns = ['Chemical Class', 'Peak Count']
         st.table(class_counts)
 
+        # --- NEW: FILENAME EXTRACTOR LOGIC ---
+        # Kita cari perkataan 'Sample Name' dalam metadata h_s
+        try:
+            sample_name_row = h_s[h_s.iloc[:, 0].astype(str).str.contains('Sample Name', na=False, case=False)]
+            if not sample_name_row.empty:
+                # Ambil value kat sebelah dia (Column Index 1 atau 2 bergantung pada NIST format)
+                extracted_name = str(sample_name_row.iloc[0, 1]).strip()
+                # Kalau nama tu kosong atau NaN, guna default
+                if not extracted_name or extracted_name == 'nan':
+                    extracted_name = "LipidExpert_Report"
+            else:
+                extracted_name = "LipidExpert_Report"
+        except:
+            extracted_name = "LipidExpert_Report"
+
+        # Kemaskan nama (buang simbol pelik kalau ada)
+        clean_filename = "".join([c for c in extracted_name if c.isalnum() or c in (' ', '-', '_')]).strip()
+        final_filename = f"{clean_filename}.xlsx"
+
         # --- EXCEL EXPORT ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -183,22 +203,23 @@ if sample_file and blank_file:
             status_col_idx = df_s.columns.get_loc('Chemical_Status')
             blank_col_idx = df_s.columns.get_loc('In_Blank')
 
-            # Pink for Contaminants
             for start, limit in [(11, len(df_b)), (s2+10, len(df_s)), (s3+10, len(df_final))]:
                 ws_rep.conditional_format(start, status_col_idx, start + limit, status_col_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': pink_fmt})
 
-            # Yellow for Matches (Row)
             ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), len(df_s.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + blank_col_idx)}{s2+11}="YES"', 'format': yellow_fmt})
-            
-            # Navy Blue for Shifts (Cell RT ONLY)
             ws_rep.conditional_format(s2+10, rt_col_idx, s2+10+len(df_s), rt_col_idx, {'type': 'formula', 'criteria': f'=${chr(65 + blank_col_idx)}{s2+11}="RT_SHIFT_DETECTED"', 'format': navy_fmt})
 
-            # PCA Sheet
             ws_pca = wb.add_worksheet('PCA_Ready_Data')
             pca_compounds, pca_areas = df_final['Hit Name'].tolist(), df_final['Area (Ab*s)'].tolist()
             ws_pca.write(0, 0, 'Compound', wb.add_format({'bold': True, 'bg_color': '#E2EFDA'})); ws_pca.write(1, 0, 'Area')
             for col, (n, a) in enumerate(zip(pca_compounds, pca_areas), start=1):
                 ws_pca.write(0, col, n); ws_pca.write(1, col, a)
 
-        st.download_button("📥 Download Final Report", output.getvalue(), "LipidExpert_Expert_Report.xlsx")
+        # SEKSIYON DOWNLOAD DENGAN NAMA AUTO
+        st.download_button(
+            label=f"📥 Download Report: {final_filename}", 
+            data=output.getvalue(), 
+            file_name=final_filename,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
     except Exception as e: st.error(f"Error: {e}")
