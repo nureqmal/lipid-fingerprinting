@@ -9,28 +9,16 @@ st.title("🧪 LipidExpert: Analytical Suite")
 # --- SIDEBAR CONTROL ---
 st.sidebar.header("⚙️ Analytical Controls")
 
-q_threshold = st.sidebar.slider(
-    "Select NIST Quality Threshold", 50, 95, 80, 5,
-    help="Minimum match factor required to include a peak."
-)
-
-rt_tolerance = st.sidebar.slider(
-    "Select RT Tolerance (min)", 0.01, 0.20, 0.05, 0.01,
-    help="Maximum retention time shift allowed for matching compounds."
-)
-
-area_threshold = st.sidebar.slider(
-    "Min Area % (Noise Filter)", 0.00, 5.00, 0.00, 0.01,
-    help="Remove small peaks below this percentage of total area."
-)
+q_threshold = st.sidebar.slider("Select NIST Quality Threshold", 50, 95, 80, 5)
+rt_tolerance = st.sidebar.slider("Select RT Tolerance (min)", 0.01, 0.20, 0.05, 0.01)
+area_threshold = st.sidebar.slider("Min Area % (Noise Filter)", 0.00, 5.00, 0.00, 0.01)
 
 st.markdown(f"""
 ---
 ### Standard Operating Procedure (SOP):
 1.  **Metadata Preservation**: Captures and retains original NIST headers (Rows 1–9).
 2.  **Quality Gate**: Filtering peaks with NIST Quality **≥ {q_threshold}**.
-3.  **Noise Reduction**: Removing baseline peaks with Area **< {area_threshold:.2f}%**.
-4.  **RT-Aware Matching**: Matching compounds using Name + RT Tolerance (**±{rt_tolerance} min**).
+3.  **RT-Aware Matching**: Matching compounds using Name + RT Tolerance (**±{rt_tolerance} min**).
 ---
 """)
 
@@ -94,46 +82,66 @@ if sample_file and blank_file:
         m3.metric("Final Unique Compounds", f"{final_count}")
         m4.metric("Sample Purity Score", f"{purity:.1f}%")
 
-        # --- UPDATED: ENGLISH INTERPRETATION BOX ---
+        # --- ENGLISH INTERPRETATION BOX ---
         st.info("### 🧠 LipidExpert Intelligence")
-        
         purity_status = "High" if purity > 85 else "Moderate" if purity > 60 else "Low"
-        noise_note = f"Noise filtering at {area_threshold}% has successfully refined the biomarker profile." if area_threshold > 0 else "Baseline noise filtering is currently inactive."
-        
         summary_text = f"""
         **Data Integrity Status: {purity_status}**  
         The analysis identified **{final_count} unique biomarkers** after excluding **{excluded} peaks** found in the Solvent Blank. 
-        With the RT Tolerance set at **±{rt_tolerance} min**, the system ensures 100% authentication of the final lipid fingerprint by eliminating potential cross-contamination.
-        
-        *Note: {noise_note}*
+        With the RT Tolerance set at **±{rt_tolerance} min**, the system ensures 100% authentication of the final lipid fingerprint.
         """
         st.markdown(summary_text)
 
-        # Class Distribution Table
-        st.write("### 🧬 Final Biomarker Class Distribution")
-        class_counts = df_final['Chemical_Status'].value_counts().reset_index()
-        class_counts.columns = ['Chemical Class', 'Peak Count']
-        st.table(class_counts)
-
         st.markdown("---")
 
-        # --- TABS DISPLAY (FIXED VARIABLE NAMES) ---
+        # --- TABS DISPLAY ---
         t1, t2, t3 = st.tabs(["1. Solvent Blank Data", "2. Sample Mapping", "3. Final Unique Fingerprint"])
-        with t1: st.dataframe(df_b.style.apply(lambda x: ['background: #FFEB9C' if x['In_Sample'] == 'YES' else '' for _ in x], axis=1))
-        with t2: st.dataframe(df_s.style.apply(lambda x: ['background: #FFEB9C' if x['In_Blank'] == 'YES' else '' for _ in x], axis=1))
-        with t3: st.dataframe(df_final.drop(columns=['In_Blank']))
+        
+        with t1:
+            st.write("Highlighted rows exist in Sample.")
+            st.dataframe(df_b.style.apply(lambda x: ['background: #FFEB9C' if x['In_Sample'] == 'YES' else '' for _ in x], axis=1))
+        
+        with t2:
+            st.write("Highlighted rows exist in Blank (Purged from final).")
+            st.dataframe(df_s.style.apply(lambda x: ['background: #FFEB9C' if x['In_Blank'] == 'YES' else '' for _ in x], axis=1))
+        
+        with t3:
+            st.write("### 🔍 Interactive Drill-Down Table")
+            st.caption("Click on a row to view deep-dive analytics for that specific compound.")
+            
+            # THE DRILL-DOWN LOGIC
+            df_display = df_final.drop(columns=['In_Blank'])
+            event = st.dataframe(
+                df_display, 
+                on_select="rerun", 
+                selection_mode="single_row",
+                use_container_width=True
+            )
+            
+            if event.selection.rows:
+                selected_index = event.selection.rows[0]
+                selected_row = df_display.iloc[selected_index]
+                
+                # Detailed View
+                st.success(f"#### 🧬 Deep-Dive: {selected_row['Hit Name']}")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.write(f"**RT (min):** {selected_row['RT (min)']}")
+                c2.write(f"**Quality:** {selected_row['Quality']}")
+                c3.write(f"**Area (%):** {selected_row.get('Area (%)', 0):.4f}%")
+                c4.write(f"**Status:** {selected_row['Chemical_Status']}")
+                
+                # Internal Link (Optional)
+                st.markdown(f"[Search NIST WebBook for {selected_row['Hit Name']}](https://webbook.nist.gov/cgi/cbook.cgi?Name={selected_row['Hit Name'].replace(' ', '+')}&Units=SI)")
 
         # --- EXCEL EXPORT ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             ws_dash = writer.book.add_worksheet('Dashboard')
-            wb = writer.book
-            header_fmt = wb.add_format({'bold': True, 'font_size': 16, 'bg_color': '#2E75B6', 'font_color': 'white', 'border': 1, 'align': 'center'})
-            ws_dash.merge_range('B2:E2', 'LIPIDEXPERT ANALYTICAL SUMMARY', header_fmt)
-            metrics = [('Quality Threshold Used', q_threshold), ('RT Tolerance (min)', rt_tolerance), ('Area Threshold (%)', area_threshold), ('Final Unique Biomarkers', final_count), ('Sample Purity Score', f"{purity:.2f}%")]
+            header_fmt = writer.book.add_format({'bold': True, 'bg_color': '#2E75B6', 'font_color': 'white', 'border': 1})
+            ws_dash.write('B2', 'LIPIDEXPERT ANALYTICAL SUMMARY', header_fmt)
+            metrics = [('Quality Threshold Used', q_threshold), ('RT Tolerance (min)', rt_tolerance), ('Final Unique Biomarkers', final_count), ('Sample Purity Score', f"{purity:.2f}%")]
             for i, (l, v) in enumerate(metrics, start=4):
-                ws_dash.write(f'B{i}', l, wb.add_format({'border': 1}))
-                ws_dash.write(f'C{i}', v, wb.add_format({'border': 1, 'align': 'center'}))
+                ws_dash.write(f'B{i}', l); ws_dash.write(f'C{i}', v)
             
             rs = 'Analytical_Report'
             h_b.to_excel(writer, sheet_name=rs, startrow=1, index=False, header=False)
@@ -142,14 +150,9 @@ if sample_file and blank_file:
             h_s.to_excel(writer, sheet_name=rs, startrow=s2+1, index=False, header=False)
             df_s.to_excel(writer, sheet_name=rs, startrow=s2+10, index=False, header=False)
             s3 = s2 + len(df_s) + 15
-            fh = h_s.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (CORRECTED UNIQUE)"
+            fh = h_s.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (FINAL FINGERPRINT)"
             fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
             df_final.drop(columns=['In_Blank']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
-
-            ws_rep = writer.sheets[rs]
-            yellow = wb.add_format({'bg_color': '#FFEB9C'})
-            ws_rep.conditional_format(10, 0, 10 + len(df_b), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_b.columns)-1)}11="YES"', 'format': yellow})
-            ws_rep.conditional_format(s2+10, 0, s2+10 + len(df_s), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_s.columns)-1)}{s2+11}="YES"', 'format': yellow})
 
         st.download_button("📥 Download Final Report", output.getvalue(), "LipidExpert_Final_Report.xlsx")
     except Exception as e:
