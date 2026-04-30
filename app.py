@@ -65,17 +65,30 @@ if sample_file and blank_file:
         h_s, df_s = run_strict_procedure(sample_file, q_threshold, area_threshold)
         h_b, df_b = run_strict_procedure(blank_file, q_threshold, area_threshold)
 
-        def check_match(row, target_df, tol):
+        # --- EXPERT RT SHIFT LOGIC (The "Emas" Add-on) ---
+        def check_match_expert(row, target_df, tol):
             matches = target_df[target_df['Hit Name'] == row['Hit Name']]
+            if matches.empty:
+                return "NO", None
+            
             for _, t_row in matches.iterrows():
-                if abs(row['RT (min)'] - t_row['RT (min)']) <= tol: return "YES"
-            return "NO"
+                diff = abs(row['RT (min)'] - t_row['RT (min)'])
+                if diff <= tol:
+                    return "YES", diff # Direct match (Blank)
+            
+            # If name matches but NO RT is within tolerance
+            closest_diff = matches.apply(lambda r: abs(row['RT (min)'] - r['RT (min)']), axis=1).min()
+            return "RT_SHIFT_DETECTED", closest_diff
 
-        df_s['In_Blank'] = df_s.apply(lambda r: check_match(r, df_b, rt_tolerance), axis=1)
-        df_b['In_Sample'] = df_b.apply(lambda r: check_match(r, df_s, rt_tolerance), axis=1)
+        # Apply logic
+        res = df_s.apply(lambda r: check_match_expert(r, df_b, rt_tolerance), axis=1)
+        df_s['In_Blank'] = [x[0] for x in res]
+        df_s['RT_Diff'] = [x[1] for x in res]
+
+        # Final filtering remains the same
         df_final = df_s[df_s['In_Blank'] == "NO"].copy()
         
-        # --- METRICS DASHBOARD ---
+        # Metrics Dashboard remains the same
         total_sample, excluded, final_count = len(df_s), len(df_s[df_s['In_Blank'] == "YES"]), len(df_final)
         purity = (final_count / total_sample * 100) if total_sample > 0 else 0
         
@@ -86,29 +99,44 @@ if sample_file and blank_file:
         m3.metric("Final Unique Compounds", final_count)
         m4.metric("Sample Purity Score", f"{purity:.1f}%")
 
-        # --- DATA ANALYSIS TABS ---
-        t1, t2, t3 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint"])
-        with t1: st.dataframe(df_b.style.apply(lambda x: ['background: #FFEB9C' if x['In_Sample'] == 'YES' else '' for _ in x], axis=1))
-        with t2: st.dataframe(df_s.style.apply(lambda x: ['background: #FFEB9C' if x['In_Blank'] == 'YES' else '' for _ in x], axis=1))
-        with t3: st.dataframe(df_final.drop(columns=['In_Blank']))
+        # --- DATA ANALYSIS TABS (Updated with Tab 4) ---
+        t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. 🧠 Expert RT Analysis"])
+        
+        with t1: 
+            st.dataframe(df_b.style.apply(lambda x: ['background: #FFEB9C' if any(abs(x['RT (min)'] - r['RT (min)']) <= rt_tolerance for _, r in df_s[df_s['Hit Name'] == x['Hit Name']].iterrows()) else '' for _ in x], axis=1))
+        
+        with t2: 
+            # Blue highlight for RT shifts!
+            st.dataframe(df_s.style.apply(lambda x: ['background: #FFEB9C' if x['In_Blank'] == 'YES' else 'background: #E8F8FF' if x['In_Blank'] == 'RT_SHIFT_DETECTED' else '' for _ in x], axis=1))
+        
+        with t3: 
+            st.dataframe(df_final.drop(columns=['In_Blank', 'RT_Diff']))
+
+        with t4:
+            st.write("### 🧬 RT Shift Discussion Logic")
+            rt_issues = df_s[df_s['In_Blank'] == "RT_SHIFT_DETECTED"]
+            if not rt_issues.empty:
+                st.info(f"Found **{len(rt_issues)}** compounds with same Hit Name but significant RT shifts (> {rt_tolerance} min).")
+                st.table(rt_issues[['Hit Name', 'RT (min)', 'RT_Diff']])
+                st.markdown(f"""
+                **Expert Reasoning:** 
+                These compounds (e.g., *{rt_issues['Hit Name'].iloc[0]}*) are **RETAINED** in your final profile. 
+                Although they share a NIST library name with the blank, the RT difference (>{rt_tolerance} min) indicates 
+                they are likely distinct isomers or different analytes. This prevents over-purging of potential biomarkers.
+                """)
+            else:
+                st.success("No significant RT shifts detected. All library matches were within tolerance.")
 
         # --- BOTTOM SUMMARY ---
         st.markdown("---")
         st.info("### 📝 Summary")
-        
         purity_status = "High" if purity > 85 else "Moderate" if purity > 60 else "Low"
-        summary_text = f"""
-        **Data Integrity Status: {purity_status}**  
-        The analysis identified **{final_count} unique biomarkers** after excluding **{excluded} peaks** found in the Solvent Blank. 
-        With the RT Tolerance set at **±{rt_tolerance} min**, the system ensures 100% authentication of the final lipid fingerprint.
-        """
-        st.markdown(summary_text)
-
+        st.markdown(f"**Data Integrity Status: {purity_status}**")
         class_counts = df_final['Chemical_Status'].value_counts().reset_index()
         class_counts.columns = ['Chemical Class', 'Peak Count']
         st.table(class_counts)
 
-        # --- EXCEL EXPORT LOGIC ---
+        # --- EXCEL EXPORT (Maintain Emas Structure) ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             wb = writer.book
@@ -116,24 +144,22 @@ if sample_file and blank_file:
             label_fmt = wb.add_format({'bold': True, 'bg_color': '#D9E1F2', 'border': 1})
             val_fmt = wb.add_format({'border': 1, 'align': 'center'})
             yellow_fmt = wb.add_format({'bg_color': '#FFEB9C', 'border': 1})
+            blue_fmt = wb.add_format({'bg_color': '#E8F8FF', 'border': 1})
             pink_fmt = wb.add_format({'bg_color': '#FFC0CB', 'border': 1})
 
             ws_dash = wb.add_worksheet('Dashboard')
             ws_dash.merge_range('B2:E2', 'LIPIDEXPERT ANALYTICAL SUMMARY', header_fmt)
-            metrics = [('Quality Threshold Used', q_threshold), ('RT Tolerance (min)', rt_tolerance), ('Area Threshold (%)', area_threshold), ('Final Unique Biomarkers', final_count), ('Sample Purity Score', f"{purity:.2f}%")]
-            for i, (l, v) in enumerate(metrics, start=4):
+            metrics_list = [('Quality Threshold', q_threshold), ('RT Tolerance', rt_tolerance), ('Area Threshold', area_threshold), ('Final Biomarkers', final_count), ('Purity Score', f"{purity:.2f}%")]
+            for i, (l, v) in enumerate(metrics_list, start=4):
                 ws_dash.write(f'B{i}', l, label_fmt); ws_dash.write(f'C{i}', v, val_fmt)
             
-            ws_dash.write('B11', 'COLOR LEGEND / GUIDELINE:', wb.add_format({'bold': True, 'underline': True}))
-            ws_dash.write('B12', 'Yellow Highlight', yellow_fmt)
-            ws_dash.write('C12', 'Matched in Blank (Excluded from Final Profile)', wb.add_format({'font_size': 10}))
-            ws_dash.write('B13', 'Pink Cell', pink_fmt)
-            ws_dash.write('C13', 'Potential Contaminant: Detected halogenated groups (Cl, I, Br, F) or aromatic artifacts.', wb.add_format({'font_size': 10, 'italic': True}))
-            ws_dash.write('C14', 'Recommendation: Verify fragmentation pattern to confirm if it is a true lipid or an external impurity.', wb.add_format({'font_size': 9, 'font_color': '#808080'}))
-            ws_dash.set_column('B:B', 35); ws_dash.set_column('C:C', 85)
+            ws_dash.write('B10', 'COLOR LEGEND:', wb.add_format({'bold': True, 'underline': True}))
+            ws_dash.write('B11', 'Yellow', yellow_fmt); ws_dash.write('C11', 'Blank Match (Purged)')
+            ws_dash.write('B12', 'Light Blue', blue_fmt); ws_dash.write('C12', 'RT Shift Detected (Retained - Different Isomer)')
+            ws_dash.write('B13', 'Pink Cell', pink_fmt); ws_dash.write('C13', 'Potential Contaminant (Requires Review)')
+            ws_dash.set_column('B:B', 30); ws_dash.set_column('C:C', 70)
 
             rs = 'Analytical_Report'
-            ws_rep = wb.add_worksheet(rs)
             h_b.to_excel(writer, sheet_name=rs, startrow=2, index=False, header=False)
             df_b.to_excel(writer, sheet_name=rs, startrow=11, index=False, header=False)
             s2 = len(df_b) + 16
@@ -142,24 +168,24 @@ if sample_file and blank_file:
             s3 = s2 + len(df_s) + 15
             fh = h_s.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (CORRECTED UNIQUE)"
             fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
-            df_final.drop(columns=['In_Blank']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
+            df_final.drop(columns=['In_Blank', 'RT_Diff']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
 
-            yellow_bg, pink_bg = wb.add_format({'bg_color': '#FFEB9C'}), wb.add_format({'bg_color': '#FFC0CB'})
+            # Highlighting
+            ws_rep = writer.sheets[rs]
             status_col_idx = df_s.columns.get_loc('Chemical_Status')
-            for start in [11, s2+10, s3+10]:
-                limit = len(df_b) if start == 11 else len(df_s) if start == s2+10 else len(df_final)
-                ws_rep.conditional_format(start, status_col_idx, start + limit, status_col_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': pink_bg})
+            for start, limit in [(11, len(df_b)), (s2+10, len(df_s)), (s3+10, len(df_final))]:
+                ws_rep.conditional_format(start, status_col_idx, start + limit, status_col_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': pink_fmt})
             
-            ws_rep.conditional_format(11, 0, 11 + len(df_b), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_b.columns)-1)}12="YES"', 'format': yellow_bg})
-            ws_rep.conditional_format(s2+10, 0, s2+10 + len(df_s), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_s.columns)-1)}{s2+11}="YES"', 'format': yellow_bg})
+            # Yellow Match & Blue Shift
+            ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), 25, {'type': 'formula', 'criteria': f'=${chr(65 + df_s.columns.get_loc("In_Blank"))}{s2+11}="YES"', 'format': yellow_fmt})
+            ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), 25, {'type': 'formula', 'criteria': f'=${chr(65 + df_s.columns.get_loc("In_Blank"))}{s2+11}="RT_SHIFT_DETECTED"', 'format': blue_fmt})
 
+            # PCA Sheet
             ws_pca = wb.add_worksheet('PCA_Ready_Data')
             pca_compounds, pca_areas = df_final['Hit Name'].tolist(), df_final['Area (Ab*s)'].tolist()
-            ws_pca.write(0, 0, 'Compound (Hit Name)', wb.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1}))
-            ws_pca.write(1, 0, 'Area Absorbance', wb.add_format({'bold': True, 'border': 1}))
-            for col_num, (name, area) in enumerate(zip(pca_compounds, pca_areas), start=1):
-                ws_pca.write(0, col_num, name); ws_pca.write(1, col_num, area)
-            ws_pca.set_column(1, len(pca_compounds), 20)
+            ws_pca.write(0, 0, 'Compound', wb.add_format({'bold': True, 'bg_color': '#E2EFDA'})); ws_pca.write(1, 0, 'Area')
+            for col, (n, a) in enumerate(zip(pca_compounds, pca_areas), start=1):
+                ws_pca.write(0, col, n); ws_pca.write(1, col, a)
 
-        st.download_button("📥 Download Final Report", output.getvalue(), "LipidExpert_Final_Report.xlsx")
+        st.download_button("📥 Download Final Report", output.getvalue(), "LipidExpert_Expert_Report.xlsx")
     except Exception as e: st.error(f"Error: {e}")
