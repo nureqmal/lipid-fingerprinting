@@ -35,6 +35,7 @@ def run_strict_procedure(file, q_min, area_min):
     df['Area (%)'] = (df['Area (Ab*s)'] / total_area) * 100
     df = df[(df['Quality'] >= q_min) & (df['Area (%)'] >= area_min)]
 
+    # --- CLASSIFICATION CRITERIA ---
     blacklist = ['siloxane', 'phthalate', 'octaxilonaxe', 'bleed', 'plasticizer', 'adipate', 'column bleed']
     contaminants = ['iodo', 'chloro', 'bromo', 'fluoro', 'iodide', 'chloride', 'thiophene', 'benzothiophene', 'naphthalene', 'benzene,']
 
@@ -80,8 +81,6 @@ if sample_file and blank_file:
         m4.metric("Sample Purity Score", f"{purity:.1f}%")
 
         st.info("### 🧠 LipidExpert Intelligence")
-        st.markdown(f"**Data Integrity Status: {'High' if purity > 85 else 'Moderate'}**")
-
         class_counts = df_final['Chemical_Status'].value_counts().reset_index()
         class_counts.columns = ['Chemical Class', 'Peak Count']
         st.table(class_counts)
@@ -98,7 +97,7 @@ if sample_file and blank_file:
             label_fmt = wb.add_format({'bold': True, 'bg_color': '#D9E1F2', 'border': 1})
             val_fmt = wb.add_format({'border': 1, 'align': 'center'})
             yellow_fmt = wb.add_format({'bg_color': '#FFEB9C', 'border': 1})
-            pink_fmt = wb.add_format({'bg_color': '#FFC0CB', 'border': 1}) # Pink Cell Format
+            pink_fmt = wb.add_format({'bg_color': '#FFC0CB', 'border': 1})
 
             # --- 1. DASHBOARD ---
             ws_dash = wb.add_worksheet('Dashboard')
@@ -111,38 +110,35 @@ if sample_file and blank_file:
             ws_dash.write('B12', 'Yellow Highlight', yellow_fmt)
             ws_dash.write('C12', 'Matched in Blank (Excluded from Final Profile)', wb.add_format({'font_size': 10}))
             ws_dash.write('B13', 'Pink Cell', pink_fmt)
-            ws_dash.write('C13', 'Potential Contaminant (Requires Manual Review)', wb.add_format({'font_size': 10}))
-            ws_dash.set_column('B:B', 35); ws_dash.set_column('C:C', 60)
+            ws_dash.write('C13', 'Potential Contaminant: Detected halogenated groups (Cl, I, Br, F) or aromatic artifacts.', wb.add_format({'font_size': 10, 'italic': True}))
+            ws_dash.write('C14', 'Recommendation: Verify fragmentation pattern to confirm if it is a true lipid or an external impurity.', wb.add_format({'font_size': 9, 'font_color': '#808080'}))
+            
+            ws_dash.set_column('B:B', 35); ws_dash.set_column('C:C', 85)
 
             # --- 2. REPORT ---
             rs = 'Analytical_Report'
             ws_rep = wb.add_worksheet(rs)
             h_b.to_excel(writer, sheet_name=rs, startrow=2, index=False, header=False)
             df_b.to_excel(writer, sheet_name=rs, startrow=11, index=False, header=False)
-            
             s2 = len(df_b) + 16
             h_s.to_excel(writer, sheet_name=rs, startrow=s2+1, index=False, header=False)
             df_s.to_excel(writer, sheet_name=rs, startrow=s2+10, index=False, header=False)
-            
             s3 = s2 + len(df_s) + 15
             fh = h_s.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (CORRECTED UNIQUE)"
             fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
             df_final.drop(columns=['In_Blank']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
 
-            # Conditional Formatting
-            yellow_bg = wb.add_format({'bg_color': '#FFEB9C'})
-            pink_bg = wb.add_format({'bg_color': '#FFC0CB'})
+            yellow_bg, pink_bg = wb.add_format({'bg_color': '#FFEB9C'}), wb.add_format({'bg_color': '#FFC0CB'})
+            status_col_idx = df_s.columns.get_loc('Chemical_Status')
             
-            # Yellow: Whole row if match in blank
+            # Formats for all sections
+            for start in [11, s2+10, s3+10]:
+                limit = len(df_b) if start == 11 else len(df_s) if start == s2+10 else len(df_final)
+                ws_rep.conditional_format(start, status_col_idx, start + limit, status_col_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': pink_bg})
+            
+            # Row highlight for blank matches
             ws_rep.conditional_format(11, 0, 11 + len(df_b), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_b.columns)-1)}12="YES"', 'format': yellow_bg})
             ws_rep.conditional_format(s2+10, 0, s2+10 + len(df_s), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_s.columns)-1)}{s2+11}="YES"', 'format': yellow_bg})
-            
-            # Pink: ONLY the Chemical_Status cell if "Review"
-            status_col_idx = df_s.columns.get_loc('Chemical_Status')
-            status_letter = chr(65 + status_col_idx)
-            ws_rep.conditional_format(11, status_col_idx, 11 + len(df_b), status_col_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': pink_bg})
-            ws_rep.conditional_format(s2+10, status_col_idx, s2+10 + len(df_s), status_col_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': pink_bg})
-            ws_rep.conditional_format(s3+10, status_col_idx, s3+10 + len(df_final), status_col_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': pink_bg})
 
             # --- 3. PCA READY ---
             ws_pca = wb.add_worksheet('PCA_Ready_Data')
@@ -153,5 +149,5 @@ if sample_file and blank_file:
                 ws_pca.write(0, col_num, name); ws_pca.write(1, col_num, area)
             ws_pca.set_column(1, len(pca_compounds), 20)
 
-        st.download_button("📥 Download Diamond Report", output.getvalue(), "LipidExpert_Final_Report.xlsx")
+        st.download_button("📥 Download Final Report", output.getvalue(), "LipidExpert_Final_Report.xlsx")
     except Exception as e: st.error(f"Error: {e}")
