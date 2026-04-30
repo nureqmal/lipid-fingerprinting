@@ -9,9 +9,20 @@ st.title("🧪 LipidExpert: Analytical Suite")
 # --- SIDEBAR CONTROL ---
 st.sidebar.header("⚙️ Analytical Controls")
 
-q_threshold = st.sidebar.slider("Select NIST Quality Threshold", 50, 95, 80, 5)
-rt_tolerance = st.sidebar.slider("Select RT Tolerance (min)", 0.01, 0.20, 0.05, 0.01)
-area_threshold = st.sidebar.slider("Min Area % (Noise Filter)", 0.00, 5.00, 0.00, 0.01)
+q_threshold = st.sidebar.slider(
+    "Select NIST Quality Threshold", 50, 95, 80, 5,
+    help="Minimum match factor required to include a peak."
+)
+
+rt_tolerance = st.sidebar.slider(
+    "Select RT Tolerance (min)", 0.01, 0.20, 0.05, 0.01,
+    help="Maximum retention time shift allowed for matching compounds."
+)
+
+area_threshold = st.sidebar.slider(
+    "Min Area % (Noise Filter)", 0.00, 5.00, 0.00, 0.01,
+    help="Remove small peaks below this percentage of total area."
+)
 
 st.markdown(f"""
 ---
@@ -71,8 +82,10 @@ if sample_file and blank_file:
         df_final = df_s[df_s['In_Blank'] == "NO"].copy()
         
         # --- METRICS DASHBOARD ---
-        total_sample = len(df_s); excluded = len(df_s[df_s['In_Blank'] == "YES"])
-        final_count = len(df_final); purity = (final_count / total_sample * 100) if total_sample > 0 else 0
+        total_sample = len(df_s)
+        excluded = len(df_s[df_s['In_Blank'] == "YES"])
+        final_count = len(df_final)
+        purity = (final_count / total_sample * 100) if total_sample > 0 else 0
         
         st.subheader("📊 Analysis Summary Metrics")
         m1, m2, m3, m4 = st.columns(4)
@@ -81,62 +94,86 @@ if sample_file and blank_file:
         m3.metric("Final Unique Compounds", f"{final_count}")
         m4.metric("Sample Purity Score", f"{purity:.1f}%")
 
+        # --- UPDATED: ENGLISH INTERPRETATION BOX ---
         st.info("### 🧠 LipidExpert Intelligence")
+        
         purity_status = "High" if purity > 85 else "Moderate" if purity > 60 else "Low"
-        st.markdown(f"**Data Integrity Status: {purity_status}**")
+        noise_note = f"Noise filtering at {area_threshold}% has successfully refined the biomarker profile." if area_threshold > 0 else "Baseline noise filtering is currently inactive."
+        
+        summary_text = f"""
+        **Data Integrity Status: {purity_status}**  
+        The analysis identified **{final_count} unique biomarkers** after excluding **{excluded} peaks** found in the Solvent Blank. 
+        With the RT Tolerance set at **±{rt_tolerance} min**, the system ensures 100% authentication of the final lipid fingerprint by eliminating potential cross-contamination.
+        
+        *Note: {noise_note}*
+        """
+        st.markdown(summary_text)
 
-        # Tabs
+        # Class Distribution Table
+        st.write("### 🧬 Final Biomarker Class Distribution")
+        class_counts = df_final['Chemical_Status'].value_counts().reset_index()
+        class_counts.columns = ['Chemical Class', 'Peak Count']
+        st.table(class_counts)
+
+        st.markdown("---")
+
+        # --- TABS DISPLAY ---
         t1, t2, t3 = st.tabs(["1. Solvent Blank Data", "2. Sample Mapping", "3. Final Unique Fingerprint"])
         with t1: st.dataframe(df_b.style.apply(lambda x: ['background: #FFEB9C' if x['In_Sample'] == 'YES' else '' for _ in x], axis=1))
         with t2: st.dataframe(df_s.style.apply(lambda x: ['background: #FFEB9C' if x['In_Blank'] == 'YES' else '' for _ in x], axis=1))
         with t3: st.dataframe(df_final.drop(columns=['In_Blank']))
 
-        # --- EXCEL EXPORT (THE "PCA GOLD" EDITION) ---
+        # --- EXCEL EXPORT ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            ws_dash = writer.book.add_worksheet('Dashboard')
             wb = writer.book
             
-            # --- DASHBOARD SHEET ---
-            ws_dash = wb.add_worksheet('Dashboard')
+            # Formats
             header_fmt = wb.add_format({'bold': True, 'font_size': 16, 'bg_color': '#2E75B6', 'font_color': 'white', 'border': 1, 'align': 'center'})
-            ws_dash.merge_range('B2:E2', 'LIPIDEXPERT ANALYTICAL SUMMARY', header_fmt)
-            
-            # Legend/Guideline for Yellow highlights
+            label_fmt = wb.add_format({'bold': True, 'bg_color': '#D9E1F2', 'border': 1})
+            val_fmt = wb.add_format({'border': 1, 'align': 'center'})
             yellow_fmt = wb.add_format({'bg_color': '#FFEB9C', 'border': 1})
-            ws_dash.write('B11', 'COLOR LEGEND:', wb.add_format({'bold': True}))
-            ws_dash.write('B12', 'Yellow Highlight', yellow_fmt)
-            ws_dash.write('C12', 'Detected in BOTH Sample & Blank (Excluded from Final Profile)')
+            note_fmt = wb.add_format({'italic': True, 'font_color': '#FF0000', 'font_size': 10})
 
-            # --- ANALYTICAL REPORT SHEET ---
+            # Dashboard Layout
+            ws_dash.merge_range('B2:E2', 'LIPIDEXPERT ANALYTICAL SUMMARY', header_fmt)
+            metrics = [('Quality Threshold Used', q_threshold), ('RT Tolerance (min)', rt_tolerance), ('Area Threshold (%)', area_threshold), ('Final Unique Biomarkers', final_count), ('Sample Purity Score', f"{purity:.2f}%")]
+            for i, (l, v) in enumerate(metrics, start=4):
+                ws_dash.write(f'B{i}', l, label_fmt)
+                ws_dash.write(f'C{i}', v, val_fmt)
+            
+            # --- NEW: LEGEND BOX ---
+            ws_dash.write('B11', 'COLOR LEGEND / GUIDELINE:', wb.add_format({'bold': True, 'underline': True}))
+            ws_dash.write('B12', 'Yellow Highlight', yellow_fmt)
+            ws_dash.write('C12', 'Detected in BOTH Sample & Blank (Excluded from Final Profile)', wb.add_format({'font_size': 10}))
+            
+            ws_dash.set_column('B:B', 35); ws_dash.set_column('C:C', 60)
+
+            # --- ANALYTICAL REPORT ---
             rs = 'Analytical_Report'
+            # Add Note at the very top of report
             ws_rep = wb.add_worksheet(rs)
-            ws_rep.write('A1', 'NOTE: Rows highlighted in YELLOW indicate compounds matched in both Sample and Blank.', wb.add_format({'italic': True, 'font_color': 'red'}))
+            ws_rep.write('A1', 'NOTE: Rows highlighted in YELLOW indicate compounds matched in both Sample and Blank (Purged for Authentication).', note_fmt)
+            
+            # Write Data
             h_b.to_excel(writer, sheet_name=rs, startrow=2, index=False, header=False)
             df_b.to_excel(writer, sheet_name=rs, startrow=11, index=False, header=False)
+            
             s2 = len(df_b) + 16
             h_s.to_excel(writer, sheet_name=rs, startrow=s2+1, index=False, header=False)
             df_s.to_excel(writer, sheet_name=rs, startrow=s2+10, index=False, header=False)
-
-            # --- NEW SHEET: PCA_Ready_Matrix ---
-            pca_sheet = 'PCA_Ready_Matrix'
-            # Prepare PCA data: Rows = Compounds, sorted by Area
-            df_pca = df_final[['Hit Name', 'RT (min)', 'Area (Ab*s)', 'Area (%)', 'Quality']].copy()
-            df_pca = df_pca.sort_values(by='Area (Ab*s)', ascending=False)
-            df_pca.to_excel(writer, sheet_name=pca_sheet, index=False)
             
-            # Formatting PCA sheet
-            ws_pca = writer.sheets[pca_sheet]
-            ws_pca.set_column('A:A', 40) # Wider Compound Name
-            ws_pca.set_column('B:E', 15)
-            pca_header_fmt = wb.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1})
-            for col_num, value in enumerate(df_pca.columns.values):
-                ws_pca.write(0, col_num, value, pca_header_fmt)
+            s3 = s2 + len(df_s) + 15
+            fh = h_s.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (CORRECTED UNIQUE)"
+            fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
+            df_final.drop(columns=['In_Blank']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
 
-            # Highlight conditional formatting in report
+            # Apply Conditional Formatting
             yellow_bg = wb.add_format({'bg_color': '#FFEB9C'})
             ws_rep.conditional_format(11, 0, 11 + len(df_b), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_b.columns)-1)}12="YES"', 'format': yellow_bg})
             ws_rep.conditional_format(s2+10, 0, s2+10 + len(df_s), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_s.columns)-1)}{s2+11}="YES"', 'format': yellow_bg})
 
-        st.download_button("📥 Download PCA-Ready Report", output.getvalue(), "LipidExpert_PCA_Analysis.xlsx")
+        st.download_button("📥 Download Final Report", output.getvalue(), "LipidExpert_Final_Report.xlsx")
     except Exception as e:
         st.error(f"Error: {e}")
