@@ -3,152 +3,136 @@ import pandas as pd
 import io
 import matplotlib.pyplot as plt
 
-# Setup Page Configuration
-st.set_page_config(page_title="LipidExpert: Analytical Suite", layout="wide")
-st.title("🧪 LipidExpert: Analytical Suite")
+# --- 1. THEME & BRANDING ---
+st.set_page_config(page_title="LipidExpert | High-Integrity Authentication", layout="wide")
 
-# --- SIDEBAR CONTROL ---
+# Custom CSS for Professional Look
+st.markdown("""
+    <style>
+    .main { background-color: #f8f9fa; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border: 1px solid #e9ecef; }
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
+    .stTabs [data-baseweb="tab"] { 
+        background-color: #f1f3f5; border-radius: 4px 4px 0px 0px; padding: 10px 20px;
+    }
+    </style>
+    """, unsafe_allow_name_with_html=True)
+
+st.title("🧪 LipidExpert: Professional Analytical Suite")
+
+# --- 2. SIDEBAR ENHANCEMENTS ---
+st.sidebar.header("📋 Project Information")
+researcher_name = st.sidebar.text_input("Researcher Name", "Dr. Eqmal")
+project_title = st.sidebar.text_input("Project Title", "Halal Lipidomics Study")
+
+st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Analytical Controls")
-q_threshold = st.sidebar.slider(
-    "Select NIST Quality Threshold", 
-    min_value=50, 
-    max_value=95, 
-    value=80, 
-    step=5
-)
+q_threshold = st.sidebar.slider("NIST Quality Threshold", 50, 95, 80, 5)
+rt_tol = st.sidebar.number_input("RT Tolerance (min)", 0.01, 0.20, 0.05, 0.01)
 
 st.markdown(f"""
+**Project:** {project_title} | **Analyst:** {researcher_name}
 ---
 ### Standard Operating Procedure (SOP):
-1.  **Metadata Preservation**: Captures and retains original NIST headers (Rows 1–9) for full traceability.
-2.  **Dynamic Quality Thresholding**: Currently filtering peaks with NIST Quality **≥ {q_threshold}**.
-3.  **Expert Chemical Classification**: Categorizes compounds into Clean Lipids, Artifacts, or Contaminants.
-4.  **RT-Aware Blank Exclusion**: Matches compounds using Name + RT Tolerance (±0.05 min).
-5.  **Strict Authentication**: Matched compounds are entirely purged to ensure a unique fingerprint.
+1. **Quality Gate:** Minimum NIST Match ≥ {q_threshold}.
+2. **Artifact Purge:** Removal of column/instrument bleeding markers.
+3. **Strict Authentication:** 100% removal of peaks matching Solvent Blank within ±{rt_tol} min.
 ---
 """)
 
-def run_strict_procedure(file, threshold):
-    df_full_raw = pd.read_excel(file, sheet_name='LibRes', header=None)
-    df_header = df_full_raw.iloc[0:9, :].copy()
-    df = pd.read_excel(file, sheet_name='LibRes', header=8)
-    df.columns = df.columns.str.strip() 
-
-    df_clean = df.dropna(subset=['RT (min)', 'Area (Ab*s)']).copy()
-    df_clean['Quality'] = pd.to_numeric(df_clean['Quality'], errors='coerce')
-    df_clean = df_clean[df_clean['Quality'] >= threshold]
-
-    blacklist = ['siloxane', 'phthalate', 'octaxilonaxe', 'bleed', 'plasticizer', 'adipate', 'column bleed']
-    contaminants = ['iodo', 'chloro', 'bromo', 'fluoro', 'iodide', 'chloride', 'thiophene', 'benzothiophene', 'naphthalene', 'benzene,']
-
-    def classify_compound(name):
-        name_lower = str(name).lower()
-        if any(x in name_lower for x in blacklist): return "Discard (Artifact/Bleed)"
-        if any(x in name_lower for x in contaminants): return "Review (Potential Contaminant)"
-        return "Clean (Lipid/Oxidation Product)"
-
-    df_clean['Chemical_Status'] = df_clean['Hit Name'].apply(classify_compound)
-    df_clean = df_clean[df_clean['Chemical_Status'] != "Discard (Artifact/Bleed)"]
-    df_clean = df_clean.sort_values(by='Area (Ab*s)', ascending=False).drop_duplicates(subset=['Hit Name'], keep='first')
-    df_clean = df_clean.sort_values(by='RT (min)')
+def process_data(file, threshold):
+    df_raw = pd.read_excel(file, sheet_name='LibRes', header=None)
+    header = df_raw.iloc[0:9, :].copy()
+    data = pd.read_excel(file, sheet_name='LibRes', header=8)
+    data.columns = data.columns.str.strip()
     
-    return df_header, df_clean
+    clean = data.dropna(subset=['RT (min)', 'Area (Ab*s)']).copy()
+    clean['Quality'] = pd.to_numeric(clean['Quality'], errors='coerce')
+    clean = clean[clean['Quality'] >= threshold]
+    
+    blacklist = ['siloxane', 'phthalate', 'octaxilonaxe', 'bleed', 'plasticizer', 'adipate', 'column bleed']
+    def classify(name):
+        n = str(name).lower()
+        if any(x in n for x in blacklist): return "Discard"
+        return "Clean Lipid"
 
-col1, col2 = st.columns(2)
-with col1:
-    sample_file = st.file_uploader("Upload SAMPLE File", type=['xlsx'])
-with col2:
-    blank_file = st.file_uploader("Upload BLANK File", type=['xlsx'])
+    clean['Status'] = clean['Hit Name'].apply(classify)
+    clean = clean[clean['Status'] != "Discard"]
+    clean = clean.sort_values(by='Area (Ab*s)', ascending=False).drop_duplicates(subset=['Hit Name'], keep='first')
+    return header, clean.sort_values(by='RT (min)')
 
-if sample_file and blank_file:
-    try:
-        sample_header, df_sample = run_strict_procedure(sample_file, q_threshold)
-        blank_header, df_blank = run_strict_procedure(blank_file, q_threshold)
+# --- 3. EXECUTION ---
+col_u1, col_u2 = st.columns(2)
+with col_u1: sample_f = st.file_uploader("Upload SAMPLE File", type=['xlsx'])
+with col_u2: blank_f = st.file_uploader("Upload BLANK File", type=['xlsx'])
 
-        rt_tolerance = 0.05
-        def check_match(row, target_df):
-            matches = target_df[target_df['Hit Name'] == row['Hit Name']]
-            for _, t_row in matches.iterrows():
-                if abs(row['RT (min)'] - t_row['RT (min)']) <= rt_tolerance: return "YES"
-            return "NO"
+if sample_f and blank_f:
+    h_s, df_s = process_data(sample_f, q_threshold)
+    h_b, df_b = process_data(blank_f, q_threshold)
 
-        df_sample['Matched_In_Blank?'] = df_sample.apply(lambda r: check_match(r, df_blank), axis=1)
-        df_blank['Matched_In_Sample?'] = df_blank.apply(lambda r: check_match(r, df_sample), axis=1)
-        df_final = df_sample[df_sample['Matched_In_Blank?'] == "NO"].copy()
+    def match_logic(row, ref_df):
+        m = ref_df[ref_df['Hit Name'] == row['Hit Name']]
+        for _, r in m.iterrows():
+            if abs(row['RT (min)'] - r['RT (min)']) <= rt_tol: return "YES"
+        return "NO"
+
+    df_s['In_Blank'] = df_s.apply(lambda r: match_logic(r, df_b), axis=1)
+    df_b['In_Sample'] = df_b.apply(lambda r: match_logic(r, df_s), axis=1)
+    df_final = df_s[df_s['In_Blank'] == "NO"].copy()
+
+    # --- 4. DASHBOARD & VISUALS ---
+    st.subheader("📊 Executive Metrics")
+    c1, c2, c3, c4 = st.columns(4)
+    total, excl = len(df_s), len(df_s[df_s['In_Blank']=="YES"])
+    c1.metric("Total Peaks", total)
+    c2.metric("Excluded", excl, delta=f"-{excl}", delta_color="inverse")
+    c3.metric("Final Unique", len(df_final))
+    c4.metric("Purity Score", f"{(len(df_final)/total*100):.1f}%" if total > 0 else "0%")
+
+    v1, v2 = st.columns([1, 2])
+    with v1:
+        fig, ax = plt.subplots(figsize=(5, 5))
+        ax.pie([len(df_final), excl], labels=['Unique', 'Blank-Matched'], autopct='%1.1f%%', 
+               startangle=90, colors=['#2E75B6', '#dee2e6'], wedgeprops={'width': 0.5})
+        ax.set_title("Data Integrity Composition")
+        st.pyplot(fig)
+    with v2:
+        st.info(f"**Interpretation:** Analysis successfully identified **{len(df_final)}** unique biomarkers. "
+                f"The exclusion of {excl} peaks ensures the profile is free from solvent artifacts.")
+
+    # --- 5. TABS & EXPORT ---
+    t1, t2, t3 = st.tabs(["Solvent Blank", "Sample Mapping", "Unique Fingerprint"])
+    with t1: st.dataframe(df_b.style.apply(lambda x: ['background: #fff9db' if x['In_Sample']=='YES' else '' for _ in x], axis=1))
+    with t2: st.dataframe(df_s.style.apply(lambda x: ['background: #fff9db' if x['In_Blank']=='YES' else '' for _ in x], axis=1))
+    with t3: st.dataframe(df_final.drop(columns=['In_Blank']))
+
+    # Final Professional Export
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        # Dashboard
+        ws_d = writer.book.add_worksheet('Summary')
+        fmt = writer.book.add_format({'bold':True, 'bg_color':'#2E75B6', 'font_color':'white', 'border':1})
+        ws_d.write('B2', 'PROJECT SUMMARY', fmt)
+        ws_d.write('B3', 'Project Name'); ws_d.write('C3', project_title)
+        ws_d.write('B4', 'Analyst'); ws_d.write('C4', researcher_name)
+        ws_d.write('B5', 'Unique Biomarkers'); ws_d.write('C5', len(df_final))
         
-        # Metrics
-        total_sample = len(df_sample)
-        excluded = len(df_sample[df_sample['Matched_In_Blank?'] == "YES"])
-        final_count = len(df_final)
-        purity = (final_count / total_sample * 100) if total_sample > 0 else 0
+        # Report (Logic based on previous stable versions)
+        rs = 'Analytical_Report'
+        h_b.to_excel(writer, sheet_name=rs, startrow=1, index=False, header=False)
+        df_b.to_excel(writer, sheet_name=rs, startrow=10, index=False, header=False)
+        s2 = len(df_b) + 15
+        h_s.to_excel(writer, sheet_name=rs, startrow=s2+1, index=False, header=False)
+        df_s.to_excel(writer, sheet_name=rs, startrow=s2+10, index=False, header=False)
+        s3 = s2 + len(df_s) + 15
+        fh = h_s.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (CORRECTED UNIQUE)"
+        fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
+        df_final.drop(columns=['In_Blank']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
         
-        st.subheader("📊 Analysis Summary Metrics")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Sample Peaks", f"{total_sample}")
-        m2.metric("Blank Matches (Excluded)", f"{excluded}", delta=f"-{excluded}", delta_color="inverse")
-        m3.metric("Final Unique Compounds", f"{final_count}")
-        m4.metric("Sample Purity Score", f"{purity:.1f}%")
+        # Add Excel Formatting (Highlighting)
+        wb, ws = writer.book, writer.sheets[rs]
+        y_fmt = wb.add_format({'bg_color': '#fff9db'})
+        ws.conditional_format(10, 0, 10+len(df_b), 20, {'type':'formula', 'criteria':f'=${chr(65+len(df_b.columns)-1)}11="YES"', 'format':y_fmt})
+        ws.conditional_format(s2+10, 0, s2+10+len(df_s), 20, {'type':'formula', 'criteria':f'=${chr(65+len(df_s.columns)-1)}{s2+11}="YES"', 'format':y_fmt})
 
-        # MODERN PIE CHART (DOUGHNUT)
-        if not df_final.empty:
-            st.write("### 🧬 Lipid Class Distribution")
-            class_counts = df_final['Chemical_Status'].value_counts()
-            
-            fig, ax = plt.subplots(figsize=(8, 4))
-            colors = ['#2E75B6', '#A9D18E', '#FFD966'] # Modern Palette
-            
-            wedges, texts, autotexts = ax.pie(
-                class_counts, 
-                labels=class_counts.index, 
-                autopct='%1.1f%%', 
-                startangle=140, 
-                colors=colors,
-                pctdistance=0.85,
-                wedgeprops={'width': 0.4, 'edgecolor': 'w'} # Makes it a Doughnut
-            )
-            
-            plt.setp(autotexts, size=10, weight="bold", color="black")
-            plt.setp(texts, size=10)
-            ax.set_title("Distribution of Authenticated Lipids", pad=20)
-            st.pyplot(fig)
-
-        st.markdown("---")
-
-        # TABS & EXCEL EXPORT (Logic remains the same as previous stable version)
-        t1, t2, t3 = st.tabs(["1. Solvent Blank Data", "2. Sample Mapping", "3. Final Unique Fingerprint"])
-        with t1: st.dataframe(df_blank.style.apply(lambda x: ['background: #FFEB9C' if x['Matched_In_Sample?'] == 'YES' else '' for _ in x], axis=1))
-        with t2: st.dataframe(df_sample.style.apply(lambda x: ['background: #FFEB9C' if x['Matched_In_Blank?'] == 'YES' else '' for _ in x], axis=1))
-        with t3: st.dataframe(df_final.drop(columns=['Matched_In_Blank?']))
-
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            # Sheet 1: Dashboard
-            ws_dash = writer.book.add_worksheet('Dashboard')
-            header_fmt = writer.book.add_format({'bold': True, 'font_size': 16, 'bg_color': '#2E75B6', 'font_color': 'white', 'border': 1, 'align': 'center'})
-            ws_dash.merge_range('B2:E2', 'LIPIDEXPERT ANALYTICAL SUMMARY', header_fmt)
-            metrics = [('Quality Threshold Used', q_threshold), ('Total Cleaned Sample Peaks', total_sample), ('Blank Matches (Excluded)', excluded), ('Final Unique Biomarkers', final_count), ('Sample Purity Score', f"{purity:.2f}%")]
-            for i, (l, v) in enumerate(metrics, start=4):
-                ws_dash.write(f'B{i}', l, writer.book.add_format({'bold': True, 'bg_color': '#D9E1F2', 'border': 1}))
-                ws_dash.write(f'C{i}', v, writer.book.add_format({'border': 1, 'align': 'center'}))
-            ws_dash.set_column('B:B', 35); ws_dash.set_column('C:C', 20)
-
-            # Sheet 2: Analytical Report
-            rs = 'Analytical_Report'
-            blank_header.to_excel(writer, sheet_name=rs, startrow=1, index=False, header=False)
-            df_blank.to_excel(writer, sheet_name=rs, startrow=10, index=False, header=False)
-            s2 = len(df_blank) + 15
-            sample_header.to_excel(writer, sheet_name=rs, startrow=s2+1, index=False, header=False)
-            df_sample.to_excel(writer, sheet_name=rs, startrow=s2+10, index=False, header=False)
-            s3 = s2 + len(df_sample) + 15
-            fh = sample_header.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (CORRECTED UNIQUE PROFILE)"
-            fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
-            df_final.drop(columns=['Matched_In_Blank?']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
-
-            wb, ws = writer.book, writer.sheets[rs]
-            yellow = wb.add_format({'bg_color': '#FFEB9C'})
-            ws.conditional_format(10, 0, 10 + len(df_blank), 20, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_blank.columns)-1)}11="YES"', 'format': yellow})
-            ws.conditional_format(s2+10, 0, s2+10 + len(df_sample), 20, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_sample.columns)-1)}{s2+11}="YES"', 'format': yellow})
-
-        st.download_button("📥 Download Final Report", output.getvalue(), "LipidExpert_Final_Report.xlsx")
-    except Exception as e:
-        st.error(f"Error: {e}")
+    st.download_button("📥 Download Executive Report", output.getvalue(), f"{project_title}_Report.xlsx")
