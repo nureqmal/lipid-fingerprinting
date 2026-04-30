@@ -8,21 +8,34 @@ st.title("🧪 LipidExpert: Analytical Suite")
 
 # --- SIDEBAR CONTROL ---
 st.sidebar.header("⚙️ Analytical Controls")
+
+# Slider 1: Quality Threshold
 q_threshold = st.sidebar.slider(
     "Select NIST Quality Threshold", 
     min_value=50, 
     max_value=95, 
     value=80, 
-    step=5
+    step=5,
+    help="Minimum match factor required to include a peak."
+)
+
+# Slider 2: RT Tolerance (NEW)
+rt_tolerance = st.sidebar.slider(
+    "Select RT Tolerance (min)", 
+    min_value=0.01, 
+    max_value=0.20, 
+    value=0.05, 
+    step=0.01,
+    help="Maximum retention time shift allowed for matching compounds."
 )
 
 st.markdown(f"""
 ---
 ### Standard Operating Procedure (SOP):
 1.  **Metadata Preservation**: Captures and retains original NIST headers (Rows 1–9) for full traceability.
-2.  **Dynamic Quality Thresholding**: Currently filtering peaks with NIST Quality **≥ {q_threshold}**.
+2.  **Dynamic Quality Thresholding**: Filtering peaks with NIST Quality **≥ {q_threshold}**.
 3.  **Expert Chemical Classification**: Categorizes compounds into Clean Lipids, Artifacts, or Contaminants.
-4.  **RT-Aware Blank Exclusion**: Matches compounds using Name + RT Tolerance (±0.05 min).
+4.  **Dynamic RT-Aware Matching**: Matching compounds using Name + RT Tolerance (**±{rt_tolerance} min**).
 5.  **Strict Authentication**: Matched compounds are entirely purged to ensure a unique fingerprint.
 ---
 """)
@@ -64,15 +77,15 @@ if sample_file and blank_file:
         sample_header, df_sample = run_strict_procedure(sample_file, q_threshold)
         blank_header, df_blank = run_strict_procedure(blank_file, q_threshold)
 
-        rt_tolerance = 0.05
-        def check_match(row, target_df):
+        # Use the dynamic RT Tolerance from slider
+        def check_match(row, target_df, tol):
             matches = target_df[target_df['Hit Name'] == row['Hit Name']]
             for _, t_row in matches.iterrows():
-                if abs(row['RT (min)'] - t_row['RT (min)']) <= rt_tolerance: return "YES"
+                if abs(row['RT (min)'] - t_row['RT (min)']) <= tol: return "YES"
             return "NO"
 
-        df_sample['Matched_In_Blank?'] = df_sample.apply(lambda r: check_match(r, df_blank), axis=1)
-        df_blank['Matched_In_Sample?'] = df_blank.apply(lambda r: check_match(r, df_sample), axis=1)
+        df_sample['Matched_In_Blank?'] = df_sample.apply(lambda r: check_match(r, df_blank, rt_tolerance), axis=1)
+        df_blank['Matched_In_Sample?'] = df_blank.apply(lambda r: check_match(r, df_sample, rt_tolerance), axis=1)
         df_final = df_sample[df_sample['Matched_In_Blank?'] == "NO"].copy()
         
         # --- METRICS DASHBOARD ---
@@ -88,12 +101,10 @@ if sample_file and blank_file:
         m3.metric("Final Unique Compounds", f"{final_count}")
         m4.metric("Sample Purity Score", f"{purity:.1f}%")
 
-        # --- NEW: ON-PAGE CLASS DISTRIBUTION ---
+        # Class Distribution Table
         st.write("### 🧬 Final Biomarker Class Distribution")
         class_counts = df_final['Chemical_Status'].value_counts().reset_index()
         class_counts.columns = ['Chemical Class', 'Peak Count']
-        
-        # Display as a clean table
         st.table(class_counts)
 
         st.markdown("---")
@@ -107,7 +118,7 @@ if sample_file and blank_file:
         # --- EXCEL EXPORT ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            # Sheet 1: Dashboard
+            # Dashboard
             ws_dash = writer.book.add_worksheet('Dashboard')
             wb = writer.book
             header_fmt = wb.add_format({'bold': True, 'font_size': 16, 'bg_color': '#2E75B6', 'font_color': 'white', 'border': 1, 'align': 'center'})
@@ -118,6 +129,7 @@ if sample_file and blank_file:
             
             metrics = [
                 ('Quality Threshold Used', q_threshold),
+                ('RT Tolerance (min)', rt_tolerance),
                 ('Total Cleaned Sample Peaks', total_sample),
                 ('Blank Matches (Excluded)', excluded),
                 ('Final Unique Biomarkers', final_count),
@@ -136,7 +148,7 @@ if sample_file and blank_file:
 
             ws_dash.set_column('B:B', 35); ws_dash.set_column('C:C', 20)
 
-            # Sheet 2: Analytical Report
+            # Report
             rs = 'Analytical_Report'
             blank_header.to_excel(writer, sheet_name=rs, startrow=1, index=False, header=False)
             df_blank.to_excel(writer, sheet_name=rs, startrow=10, index=False, header=False)
@@ -148,10 +160,10 @@ if sample_file and blank_file:
             fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
             df_final.drop(columns=['Matched_In_Blank?']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
 
-            wb, ws = writer.book, writer.sheets[rs]
+            ws_rep = writer.sheets[rs]
             yellow = wb.add_format({'bg_color': '#FFEB9C'})
-            ws.conditional_format(10, 0, 10 + len(df_blank), 20, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_blank.columns)-1)}11="YES"', 'format': yellow})
-            ws.conditional_format(s2+10, 0, s2+10 + len(df_sample), 20, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_sample.columns)-1)}{s2+11}="YES"', 'format': yellow})
+            ws_rep.conditional_format(10, 0, 10 + len(df_blank), 20, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_blank.columns)-1)}11="YES"', 'format': yellow})
+            ws_rep.conditional_format(s2+10, 0, s2+10 + len(df_sample), 20, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_sample.columns)-1)}{s2+11}="YES"', 'format': yellow})
 
         st.download_button("📥 Download Final Report", output.getvalue(), "LipidExpert_Final_Report.xlsx")
     except Exception as e:
