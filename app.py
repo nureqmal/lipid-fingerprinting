@@ -94,23 +94,13 @@ if sample_file and blank_file:
         m3.metric("Final Unique Compounds", f"{final_count}")
         m4.metric("Sample Purity Score", f"{purity:.1f}%")
 
-        # --- UPDATED: ENGLISH INTERPRETATION BOX ---
+        # --- ENGLISH INTERPRETATION ---
         st.info("### 🧠 LipidExpert Intelligence")
-        
         purity_status = "High" if purity > 85 else "Moderate" if purity > 60 else "Low"
         noise_note = f"Noise filtering at {area_threshold}% has successfully refined the biomarker profile." if area_threshold > 0 else "Baseline noise filtering is currently inactive."
-        
-        summary_text = f"""
-        **Data Integrity Status: {purity_status}**  
-        The analysis identified **{final_count} unique biomarkers** after excluding **{excluded} peaks** found in the Solvent Blank. 
-        With the RT Tolerance set at **±{rt_tolerance} min**, the system ensures 100% authentication of the final lipid fingerprint by eliminating potential cross-contamination.
-        
-        *Note: {noise_note}*
-        """
+        summary_text = f"**Data Integrity Status: {purity_status}**\nThe analysis identified **{final_count} unique biomarkers** after excluding **{excluded} peaks** found in the Solvent Blank. With RT Tolerance set at **±{rt_tolerance} min**."
         st.markdown(summary_text)
 
-        # Class Distribution Table
-        st.write("### 🧬 Final Biomarker Class Distribution")
         class_counts = df_final['Chemical_Status'].value_counts().reset_index()
         class_counts.columns = ['Chemical Class', 'Peak Count']
         st.table(class_counts)
@@ -126,7 +116,6 @@ if sample_file and blank_file:
         # --- EXCEL EXPORT ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            ws_dash = writer.book.add_worksheet('Dashboard')
             wb = writer.book
             
             # Formats
@@ -135,45 +124,54 @@ if sample_file and blank_file:
             val_fmt = wb.add_format({'border': 1, 'align': 'center'})
             yellow_fmt = wb.add_format({'bg_color': '#FFEB9C', 'border': 1})
             note_fmt = wb.add_format({'italic': True, 'font_color': '#FF0000', 'font_size': 10})
+            pca_head_fmt = wb.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1, 'align': 'center'})
 
-            # Dashboard Layout
+            # 1. Dashboard Layout
+            ws_dash = wb.add_worksheet('Dashboard')
             ws_dash.merge_range('B2:E2', 'LIPIDEXPERT ANALYTICAL SUMMARY', header_fmt)
             metrics = [('Quality Threshold Used', q_threshold), ('RT Tolerance (min)', rt_tolerance), ('Area Threshold (%)', area_threshold), ('Final Unique Biomarkers', final_count), ('Sample Purity Score', f"{purity:.2f}%")]
             for i, (l, v) in enumerate(metrics, start=4):
                 ws_dash.write(f'B{i}', l, label_fmt)
                 ws_dash.write(f'C{i}', v, val_fmt)
             
-            # --- NEW: LEGEND BOX ---
             ws_dash.write('B11', 'COLOR LEGEND / GUIDELINE:', wb.add_format({'bold': True, 'underline': True}))
             ws_dash.write('B12', 'Yellow Highlight', yellow_fmt)
             ws_dash.write('C12', 'Detected in BOTH Sample & Blank (Excluded from Final Profile)', wb.add_format({'font_size': 10}))
-            
             ws_dash.set_column('B:B', 35); ws_dash.set_column('C:C', 60)
 
-            # --- ANALYTICAL REPORT ---
+            # 2. Analytical Report
             rs = 'Analytical_Report'
-            # Add Note at the very top of report
             ws_rep = wb.add_worksheet(rs)
-            ws_rep.write('A1', 'NOTE: Rows highlighted in YELLOW indicate compounds matched in both Sample and Blank (Purged for Authentication).', note_fmt)
-            
-            # Write Data
+            ws_rep.write('A1', 'NOTE: Rows highlighted in YELLOW indicate compounds matched in both Sample and Blank.', note_fmt)
             h_b.to_excel(writer, sheet_name=rs, startrow=2, index=False, header=False)
             df_b.to_excel(writer, sheet_name=rs, startrow=11, index=False, header=False)
-            
             s2 = len(df_b) + 16
             h_s.to_excel(writer, sheet_name=rs, startrow=s2+1, index=False, header=False)
             df_s.to_excel(writer, sheet_name=rs, startrow=s2+10, index=False, header=False)
-            
             s3 = s2 + len(df_s) + 15
             fh = h_s.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (CORRECTED UNIQUE)"
             fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
             df_final.drop(columns=['In_Blank']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
+
+            # 3. PCA Ready Data Sheet (THE NEW PART)
+            ws_pca = wb.add_worksheet('PCA_Ready_Data')
+            # Susun Hit Name melintang (Row 1), Area (Row 2)
+            pca_compounds = df_final['Hit Name'].tolist()
+            pca_areas = df_final['Area (Ab*s)'].tolist()
+            
+            ws_pca.write(0, 0, 'Compound (Hit Name)', pca_head_fmt)
+            ws_pca.write(1, 0, 'Area Absorbance', wb.add_format({'bold': True, 'border': 1}))
+            
+            for col_num, (name, area) in enumerate(zip(pca_compounds, pca_areas), start=1):
+                ws_pca.write(0, col_num, name, pca_head_fmt)
+                ws_pca.write(1, col_num, area, val_fmt)
+            ws_pca.set_column(1, len(pca_compounds), 20)
 
             # Apply Conditional Formatting
             yellow_bg = wb.add_format({'bg_color': '#FFEB9C'})
             ws_rep.conditional_format(11, 0, 11 + len(df_b), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_b.columns)-1)}12="YES"', 'format': yellow_bg})
             ws_rep.conditional_format(s2+10, 0, s2+10 + len(df_s), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_s.columns)-1)}{s2+11}="YES"', 'format': yellow_bg})
 
-        st.download_button("📥 Download Final Report", output.getvalue(), "LipidExpert_Final_Report.xlsx")
+        st.download_button("📥 Download Final Report (PCA Ready)", output.getvalue(), "LipidExpert_Final_Report.xlsx")
     except Exception as e:
         st.error(f"Error: {e}")
