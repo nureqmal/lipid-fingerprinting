@@ -11,19 +11,15 @@ st.markdown("""
 This suite is configured for **Halal Authentication** standards. To eliminate the risk of false biomarkers, any compound detected in the Solvent Blank will be **entirely excluded** from the sample profile.
 
 ### Operational Procedure:
-1.  **Metadata Acquisition**: Preservation of original NIST headers (Rows 1–9) for traceability.
+1.  **Metadata Acquisition**: Preservation of original NIST headers (Rows 1–9) for all validation tables.
 2.  **Quality Thresholding**: Minimum NIST Match Factor of **80**.
-3.  **Expert Classification**: Artifacts and petroleum-based contaminants are discarded or flagged.
-4.  **Peak Deduplication**: Selection of the **Maximum Area** for unique chemical entities.
-5.  **Strict Blank Exclusion**: 
-    *   Any compound present in the Solvent Blank is deemed "Non-Unique."
-    *   These compounds are **completely removed** from the final profile to ensure biomarker integrity.
-6.  **Comparative Reporting**: Triple-table validation for Blank, Raw, and Unique-only results.
+3.  **Expert Classification**: Artifacts and petroleum-based contaminants are discarded.
+4.  **Strict Blank Exclusion**: Any compound present in the Solvent Blank is completely removed from the final profile.
 ---
 """)
 
 def run_strict_procedure(file):
-    # 1. READ FULL DATA
+    # 1. READ FULL DATA (Including Row 0 for Metadata)
     df_full_raw = pd.read_excel(file, sheet_name='LibRes', header=None)
     
     # 2. EXTRACT HEADER (Rows 0-8)
@@ -51,7 +47,7 @@ def run_strict_procedure(file):
     df_clean['Chemical_Status'] = df_clean['Hit Name'].apply(classify_compound)
     df_clean = df_clean[df_clean['Chemical_Status'] != "Discard (Artifact/Bleed)"]
 
-    # STEP 3: Deduplication (Peak Picking)
+    # STEP 3: Deduplication (Max Area)
     df_clean = df_clean.sort_values(by='Area (Ab*s)', ascending=False)
     df_clean = df_clean.drop_duplicates(subset=['Hit Name'], keep='first')
     df_clean = df_clean.sort_values(by='RT (min)')
@@ -67,52 +63,47 @@ with col2:
 
 if sample_file and blank_file:
     try:
-        # Process Sample and Blank with same strict filters
+        # Process Sample and Blank
         sample_header, df_sample = run_strict_procedure(sample_file)
-        _, df_blank = run_strict_procedure(blank_file)
+        blank_header, df_blank = run_strict_procedure(blank_file)
 
         # --- STRICT EXCLUSION LOGIC ---
         blank_compounds = set(df_blank['Hit Name'].unique())
-        
-        # Mark in Raw Sample
         df_sample['In_Blank?'] = df_sample['Hit Name'].apply(lambda x: "YES" if x in blank_compounds else "NO")
 
-        # Create Final Profile (Keep only compounds NOT in blank)
+        # Final Unique Profile
         df_final = df_sample[df_sample['In_Blank?'] == "NO"].copy()
         
-        # Metadata Update
+        # Metadata Setup for Final Table
         final_header = sample_header.copy()
         final_header.iloc[0,0] = f"{final_header.iloc[0,0]} (STRICT EXCLUSION: UNIQUE ONLY)"
 
         # --- UI DISPLAY ---
         st.success("Strict Authentication Analysis Complete.")
-        t1, t2, t3 = st.tabs(["1. Solvent Blank Data", "2. Sample Mapping", "3. Final Unique Biomarkers"])
+        t1, t2, t3 = st.tabs(["1. Cleaned Blank Data", "2. Sample Mapping", "3. Final Unique Fingerprint"])
         
-        with t1: 
-            st.write("Compounds detected in Blank (These will be excluded from Sample)")
-            st.dataframe(df_blank)
-        with t2: 
-            st.info("Yellow rows indicate compounds detected in the blank and will be discarded from the final profile.")
-            st.dataframe(df_sample.style.apply(lambda x: ['background: #FFFFE0' if x['In_Blank?'] == 'YES' else '' for _ in x], axis=1))
-        with t3: 
-            st.write(f"Final Profile: {len(df_final)} Unique Compounds Remaining")
-            st.dataframe(df_final.drop(columns=['In_Blank?']))
+        with t1: st.dataframe(df_blank)
+        with t2: st.dataframe(df_sample.style.apply(lambda x: ['background: #FFFFE0' if x['In_Blank?'] == 'YES' else '' for _ in x], axis=1))
+        with t3: st.dataframe(df_final.drop(columns=['In_Blank?']))
 
-        # --- PROFESSIONAL EXCEL EXPORT ---
+        # --- EXCEL EXPORT (FIXED METADATA) ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            sheet = 'Authentication_Report'
-            # Table 1: Blank
+            sheet = 'Analytical_Report'
+            
+            # Table 1: Blank Data
+            blank_header.to_excel(writer, sheet_name=sheet, startrow=1, index=False, header=False)
             df_blank.to_excel(writer, sheet_name=sheet, startrow=10, index=False)
             
-            # Table 2: Sample Raw
-            s2 = len(df_blank) + 15
-            df_sample.to_excel(writer, sheet_name=sheet, startrow=s2+10, index=False)
+            # Table 2: Raw Sample (With exclusion mapping)
+            s2_start = len(df_blank) + 15
+            sample_header.to_excel(writer, sheet_name=sheet, startrow=s2_start + 1, index=False, header=False)
+            df_sample.to_excel(writer, sheet_name=sheet, startrow=s2_start + 10, index=False)
             
-            # Table 3: Final Unique
-            s3 = s2 + len(df_sample) + 15
-            final_header.to_excel(writer, sheet_name=sheet, startrow=s3+1, index=False, header=False)
-            df_final.drop(columns=['In_Blank?']).to_excel(writer, sheet_name=sheet, startrow=s3+10, index=False)
+            # Table 3: Final Unique Profile
+            s3_start = s2_start + len(df_sample) + 15
+            final_header.to_excel(writer, sheet_name=sheet, startrow=s3_start + 1, index=False, header=False)
+            df_final.drop(columns=['In_Blank?']).to_excel(writer, sheet_name=sheet, startrow=s3_start + 10, index=False)
 
             # Excel Styling
             wb, ws = writer.book, writer.sheets[sheet]
@@ -121,13 +112,14 @@ if sample_file and blank_file:
             yellow_fmt = wb.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500'})
 
             ws.write(0, 0, "TABLE 1: CLEANED SOLVENT BLANK DATA", title_fmt)
-            ws.write(s2, 0, "TABLE 2: RAW SAMPLE (EXCLUSION MAPPING)", title_fmt)
-            ws.write(s3, 0, "TABLE 3: UNIQUE LIPID FINGERPRINT (FINAL)", title_fmt)
+            ws.write(s2_start, 0, "TABLE 2: RAW SAMPLE (EXCLUSION MAPPING)", title_fmt)
+            ws.write(s3_start, 0, "TABLE 3: UNIQUE LIPID FINGERPRINT (FINAL)", title_fmt)
 
+            # Conditional Formatting
             ws.conditional_format(0, 0, 5000, 30, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': red_fmt})
             ws.conditional_format(0, 0, 5000, 30, {'type': 'cell', 'criteria': 'equal to', 'value': '"YES"', 'format': yellow_fmt})
 
-        st.download_button("📥 Download Strict Authentication Report", output.getvalue(), "LipidExpert_Unique_Fingerprint.xlsx")
+        st.download_button("📥 Download Analytical Report", output.getvalue(), "LipidExpert_Analytical_Report.xlsx")
 
     except Exception as e:
         st.error(f"Execution Error: {e}")
