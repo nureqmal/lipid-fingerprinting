@@ -51,9 +51,14 @@ def run_strict_procedure(file, q_min, area_min):
     
     return df_header, df.sort_values(by='RT (min)')
 
+# --- FILE UPLOAD SECTION ---
+st.warning("⚠️ **IMPORTANT**: Please ensure your files are in **.xlsx** format (Microsoft Excel Worksheet). Older **.xls** formats are not supported.")
+
 col1, col2 = st.columns(2)
-with col1: sample_file = st.file_uploader("Upload SAMPLE File", type=['xlsx'])
-with col2: blank_file = st.file_uploader("Upload BLANK File", type=['xlsx'])
+with col1: 
+    sample_file = st.file_uploader("Upload SAMPLE File (.xlsx only)", type=['xlsx'])
+with col2: 
+    blank_file = st.file_uploader("Upload BLANK File (.xlsx only)", type=['xlsx'])
 
 if sample_file and blank_file:
     try:
@@ -87,7 +92,7 @@ if sample_file and blank_file:
         with t2: st.dataframe(df_s.style.apply(lambda x: ['background: #FFEB9C' if x['In_Blank'] == 'YES' else '' for _ in x], axis=1))
         with t3: st.dataframe(df_final.drop(columns=['In_Blank']))
 
-        # --- MOVED TO BOTTOM: SUMMARY ---
+        # --- BOTTOM SUMMARY ---
         st.markdown("---")
         st.info("### 📝 Summary")
         
