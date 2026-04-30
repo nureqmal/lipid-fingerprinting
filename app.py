@@ -119,24 +119,20 @@ if sample_file and blank_file:
             st.dataframe(df_final.drop(columns=['In_Blank', 'RT_Diff']))
 
         with t4:
-            st.write("### 🧬 Chromatographic RT Validation & Isomeric Differentiation")
+            st.write("### 🧬 RT Shift Discussion Logic")
             rt_issues = df_s[df_s['In_Blank'] == "RT_SHIFT_DETECTED"]
             if not rt_issues.empty:
-                st.info(f"Identified **{len(rt_issues)}** analyte(s) with identical NIST Library Hit Names but significant retention time deviations (> {rt_tolerance} min).")
+                st.info(f"Found **{len(rt_issues)}** compounds with same Hit Name but significant RT shifts (> {rt_tolerance} min).")
                 st.table(rt_issues[['Hit Name', 'RT (min)', 'RT_Diff']])
-                
-                # --- UPDATED COMPREHENSIVE REASONING ---
+                # --- UPDATED REASONING: No mention of colors ---
                 st.markdown(f"""
-                **Technical Interpretation & Expert Reasoning:**
-                
-                The analytes highlighted in **Navy Blue** exhibit significant chromatographic deviation from the solvent blank profile. While sharing a NIST spectral library identity, the observed ΔRT (min) indicates that these peaks are statistically distinct from the solvent artifacts. 
-                
-                1. **Isomeric Differentiation**: In lipidomic profiling, similar MS fragmentation patterns are common among positional isomers (e.g., *cis/trans* configurations or different double bond positions). These isomers frequently demonstrate distinct retention times due to varying column interactions.
-                2. **Matrix Effects**: Matrix-induced retention time shifts can occur; however, a deviation exceeding your set threshold suggests a distinct chemical entity rather than a simple shift.
-                3. **Validation Decision**: These peaks are **RETAINED** in the final lipid fingerprint to ensure the preservation of authentic sample-specific biomarkers and prevent over-purging of high-purity analytes.
+                **Expert Reasoning:** 
+                These compounds (e.g., *{rt_issues['Hit Name'].iloc[0]}*) are **RETAINED** in the final profile. 
+                Significant RT deviation (>{rt_tolerance} min) suggests these analytes are distinct isomeric forms 
+                or different chemical species rather than direct solvent contamination, despite sharing a library hit name.
                 """)
             else:
-                st.success("No significant RT shifts detected. Chromatographic alignment between sample and blank is within tolerance.")
+                st.success("No significant RT shifts detected.")
 
         st.markdown("---")
         st.info("### 📝 Summary")
@@ -161,10 +157,10 @@ if sample_file and blank_file:
             for i, (l, v) in enumerate(metrics_list, start=4):
                 ws_dash.write(f'B{i}', l, label_fmt); ws_dash.write(f'C{i}', v, val_fmt)
             
-            ws_dash.write('B10', 'COLOR LEGEND / VALIDATION GUIDELINE:', wb.add_format({'bold': True, 'underline': True}))
-            ws_dash.write('B11', 'Yellow Row', yellow_fmt); ws_dash.write('C11', 'Confirmed Solvent Blank Match (Purged from dataset)')
-            ws_dash.write('B12', 'Navy Blue RT Cell', navy_fmt); ws_dash.write('C12', 'RT Deviation Detected (Retained - Statistically distinct analyte/isomer)')
-            ws_dash.set_column('B:B', 35); ws_dash.set_column('C:C', 85)
+            ws_dash.write('B10', 'COLOR LEGEND:', wb.add_format({'bold': True, 'underline': True}))
+            ws_dash.write('B11', 'Yellow Row', yellow_fmt); ws_dash.write('C11', 'Blank Match (Purged from Fingerprint)')
+            ws_dash.write('B12', 'Navy Blue RT Cell', navy_fmt); ws_dash.write('C12', 'RT Shift Detected (Retained - Distinct Analyte)')
+            ws_dash.set_column('B:B', 30); ws_dash.set_column('C:C', 70)
 
             rs = 'Analytical_Report'
             h_b.to_excel(writer, sheet_name=rs, startrow=2, index=False, header=False)
