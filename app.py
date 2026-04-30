@@ -68,7 +68,6 @@ with col2:
 
 if sample_file and blank_file:
     try:
-        # FIXED: Removed keyword arguments to avoid TypeError
         h_s, df_s = run_strict_procedure(sample_file, q_threshold, area_threshold)
         h_b, df_b = run_strict_procedure(blank_file, q_threshold, area_threshold)
 
@@ -95,16 +94,16 @@ if sample_file and blank_file:
         m3.metric("Final Unique Compounds", f"{final_count}")
         m4.metric("Sample Purity Score", f"{purity:.1f}%")
 
-        # --- LIVE INTERPRETATION BOX ---
-        st.info("### 🧠 LipidExpert Interpretation")
+        # --- UPDATED: ENGLISH INTERPRETATION BOX ---
+        st.info("### 🧠 LipidExpert Intelligence")
         
         purity_status = "High" if purity > 85 else "Moderate" if purity > 60 else "Low"
-        noise_note = f"Noise filtering at {area_threshold}% has refined the biomarker list." if area_threshold > 0 else "Baseline noise filtering is currently disabled."
+        noise_note = f"Noise filtering at {area_threshold}% has successfully refined the biomarker profile." if area_threshold > 0 else "Baseline noise filtering is currently inactive."
         
         summary_text = f"""
-        **Status: {purity_status} Data Integrity**  
-        Analisis mengesan **{final_count} unik biomarker** selepas menapis **{excluded} peak** yang wujud dalam blank (Solvent). 
-        Dengan RT Tolerance ditetapkan pada **±{rt_tolerance} min**, sistem memastikan tiada pencemaran silang (*cross-contamination*) dikesan dalam profil akhir.
+        **Data Integrity Status: {purity_status}**  
+        The analysis identified **{final_count} unique biomarkers** after excluding **{excluded} peaks** found in the Solvent Blank. 
+        With the RT Tolerance set at **±{rt_tolerance} min**, the system ensures 100% authentication of the final lipid fingerprint by eliminating potential cross-contamination.
         
         *Note: {noise_note}*
         """
@@ -118,11 +117,10 @@ if sample_file and blank_file:
 
         st.markdown("---")
 
-        # --- TABS DISPLAY ---
+        # --- TABS DISPLAY (FIXED VARIABLE NAMES) ---
         t1, t2, t3 = st.tabs(["1. Solvent Blank Data", "2. Sample Mapping", "3. Final Unique Fingerprint"])
-        # Fix highlight styling to check YES
-        with t1: st.dataframe(df_blank.style.apply(lambda x: ['background: #FFEB9C' if x['In_Sample'] == 'YES' else '' for _ in x], axis=1))
-        with t2: st.dataframe(df_sample.style.apply(lambda x: ['background: #FFEB9C' if x['In_Blank'] == 'YES' else '' for _ in x], axis=1))
+        with t1: st.dataframe(df_b.style.apply(lambda x: ['background: #FFEB9C' if x['In_Sample'] == 'YES' else '' for _ in x], axis=1))
+        with t2: st.dataframe(df_s.style.apply(lambda x: ['background: #FFEB9C' if x['In_Blank'] == 'YES' else '' for _ in x], axis=1))
         with t3: st.dataframe(df_final.drop(columns=['In_Blank']))
 
         # --- EXCEL EXPORT ---
@@ -155,4 +153,4 @@ if sample_file and blank_file:
 
         st.download_button("📥 Download Final Report", output.getvalue(), "LipidExpert_Final_Report.xlsx")
     except Exception as e:
-        st.error(f"Error during processing: {e}")
+        st.error(f"Error: {e}")
