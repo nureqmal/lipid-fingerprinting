@@ -3,13 +3,10 @@ import pandas as pd
 import io
 
 # Setup Page Configuration
-st.set_page_config(page_title="LipidExpert: Strict Authentication Suite", layout="wide")
-st.title("🧪 LipidExpert: Strict Authentication Suite")
+st.set_page_config(page_title="LipidExpert: Analytical Suite", layout="wide")
+st.title("🧪 LipidExpert: Analytical Suite")
 st.markdown("""
 ---
-### System Overview: Strict Exclusion Mode (RT-Shift Aware)
-This suite is specialized for **Halal Authentication** and high-integrity lipidomics. To eliminate the risk of false biomarkers, any compound detected in the Solvent Blank is **entirely excluded** from the sample profile.
-
 ### Standard Operating Procedure (SOP):
 1.  **Metadata Preservation**: The system captures and retains the original NIST header (Rows 1–9) for all analytical tables to ensure full sample traceability.
 2.  **Quality Thresholding**: Data is filtered through a NIST Match Factor (Quality) threshold of **≥ 80**.
@@ -91,11 +88,11 @@ if sample_file and blank_file:
         
         # Metadata Update for Final Table
         final_header = sample_header.copy()
-        final_header.iloc[0,0] = f"{final_header.iloc[0,0]} (STRICT EXCLUSION: UNIQUE ONLY)"
+        final_header.iloc[0,0] = f"{final_header.iloc[0,0]} (CORRECTED: UNIQUE PROFILE)"
 
         # --- UI DISPLAY ---
         st.success("Analytical Process Complete.")
-        t1, t2, t3 = st.tabs(["1. Cleaned Blank Data", "2. Sample Mapping (Exclusion Tracker)", "3. Final Unique Fingerprint"])
+        t1, t2, t3 = st.tabs(["1. Solvent Blank Data", "2. Sample Mapping", "3. Final Unique Fingerprint"])
         
         with t1: 
             st.info("Yellow rows indicate blank compounds that match sample peaks.")
@@ -107,7 +104,7 @@ if sample_file and blank_file:
             st.write(f"Final Profile: {len(df_final)} Unique Compounds Remaining")
             st.dataframe(df_final.drop(columns=['Matched_In_Blank?']))
 
-        # --- EXCEL EXPORT (TRIPLE VALIDATION) ---
+        # --- EXCEL EXPORT ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             sheet = 'Analytical_Report'
@@ -136,15 +133,11 @@ if sample_file and blank_file:
             ws.write(s2_start, 0, "TABLE 2: RAW SAMPLE DATA (EXCLUSION MAPPING)", title_fmt)
             ws.write(s3_start, 0, "TABLE 3: UNIQUE LIPID FINGERPRINT (FINAL)", title_fmt)
 
-            # Row Highlighting (Formula Based)
-            # Table 1
+            # Conditional Formatting
             ws.conditional_format(10, 0, 10 + len(df_blank), 25, 
                                   {'type': 'formula', 'criteria': f'=${chr(65 + len(df_blank.columns)-1)}11="YES"', 'format': yellow_fmt})
-            # Table 2
             ws.conditional_format(s2_start + 10, 0, s2_start + 10 + len(df_sample), 25, 
                                   {'type': 'formula', 'criteria': f'=${chr(65 + len(df_sample.columns)-1)}{s2_start+11}="YES"', 'format': yellow_fmt})
-            
-            # Chemical Review (Red)
             ws.conditional_format(0, 0, 5000, 30, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': red_fmt})
 
         st.download_button("📥 Download Analytical Report", output.getvalue(), "LipidExpert_Analytical_Report.xlsx")
