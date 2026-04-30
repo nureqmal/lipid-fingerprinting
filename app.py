@@ -70,18 +70,18 @@ if sample_file and blank_file:
 
         df_final = df_sample[df_sample['Matched_In_Blank?'] == "NO"].copy()
         
-        # --- NEW: INTERACTIVE METRICS DASHBOARD ---
-        st.subheader("📊 Analysis Summary Metrics")
-        m1, m2, m3, m4 = st.columns(4)
-        
+        # --- CALCULATE METRICS ---
         total_sample = len(df_sample)
         excluded = len(df_sample[df_sample['Matched_In_Blank?'] == "YES"])
         final_count = len(df_final)
         purity = (final_count / total_sample * 100) if total_sample > 0 else 0
         
+        # --- UI DASHBOARD ---
+        st.subheader("📊 Analysis Summary Metrics")
+        m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total Sample Peaks", f"{total_sample}")
         m2.metric("Blank Matches (Excluded)", f"{excluded}", delta=f"-{excluded}", delta_color="inverse")
-        m3.metric("Final Unique Compounds", f"{final_count}", str(final_count))
+        m3.metric("Final Unique Compounds", f"{final_count}")
         m4.metric("Sample Purity Score", f"{purity:.1f}%")
         
         st.markdown("---")
@@ -91,41 +91,69 @@ if sample_file and blank_file:
 
         # --- UI DISPLAY ---
         t1, t2, t3 = st.tabs(["1. Solvent Blank Data", "2. Sample Mapping", "3. Final Unique Fingerprint"])
-        
-        with t1: 
-            st.dataframe(df_blank.style.apply(lambda x: ['background: #FFEB9C' if x['Matched_In_Sample?'] == 'YES' else '' for _ in x], axis=1))
-        with t2: 
-            st.dataframe(df_sample.style.apply(lambda x: ['background: #FFEB9C' if x['Matched_In_Blank?'] == 'YES' else '' for _ in x], axis=1))
-        with t3: 
-            st.dataframe(df_final.drop(columns=['Matched_In_Blank?']))
+        with t1: st.dataframe(df_blank.style.apply(lambda x: ['background: #FFEB9C' if x['Matched_In_Sample?'] == 'YES' else '' for _ in x], axis=1))
+        with t2: st.dataframe(df_sample.style.apply(lambda x: ['background: #FFEB9C' if x['Matched_In_Blank?'] == 'YES' else '' for _ in x], axis=1))
+        with t3: st.dataframe(df_final.drop(columns=['Matched_In_Blank?']))
 
-        # --- EXCEL EXPORT ---
+        # --- EXCEL EXPORT (WITH DASHBOARD SHEET) ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            sheet = 'Analytical_Report'
-            blank_header.to_excel(writer, sheet_name=sheet, startrow=1, index=False, header=False)
-            df_blank.to_excel(writer, sheet_name=sheet, startrow=10, index=False, header=False)
-            s2_start = len(df_blank) + 15
-            sample_header.to_excel(writer, sheet_name=sheet, startrow=s2_start + 1, index=False, header=False)
-            df_sample.to_excel(writer, sheet_name=sheet, startrow=s2_start + 10, index=False, header=False)
-            s3_start = s2_start + len(df_sample) + 15
-            final_header.to_excel(writer, sheet_name=sheet, startrow=s3_start + 1, index=False, header=False)
-            df_final.drop(columns=['Matched_In_Blank?']).to_excel(writer, sheet_name=sheet, startrow=s3_start + 10, index=False, header=False)
+            # 1. NEW DASHBOARD SHEET
+            dash_sheet = 'Dashboard'
+            wb = writer.book
+            ws_dash = wb.add_worksheet(dash_sheet)
+            
+            # Formats
+            header_fmt = wb.add_format({'bold': True, 'font_size': 18, 'font_color': '#FFFFFF', 'bg_color': '#2E75B6', 'border': 1, 'align': 'center'})
+            metric_label_fmt = wb.add_format({'bold': True, 'font_size': 12, 'bg_color': '#D9E1F2', 'border': 1})
+            metric_val_fmt = wb.add_format({'font_size': 12, 'border': 1, 'align': 'center'})
+            
+            # Write Dashboard Content
+            ws_dash.merge_range('B2:E2', 'LIPIDEXPERT ANALYTICAL SUMMARY', header_fmt)
+            ws_dash.write('B4', 'Metric Description', metric_label_fmt)
+            ws_dash.write('C4', 'Count/Value', metric_label_fmt)
+            
+            summary_data = [
+                ['Total Cleaned Sample Peaks', total_sample],
+                ['Blank Matches (Purged)', excluded],
+                ['Final Unique Biomarkers', final_count],
+                ['Sample Purity Score', f"{purity:.2f}%"]
+            ]
+            
+            for i, (label, val) in enumerate(summary_data):
+                ws_dash.write(i+4, 1, label, metric_label_fmt)
+                ws_dash.write(i+4, 2, val, metric_val_fmt)
+            
+            ws_dash.set_column('B:B', 30)
+            ws_dash.set_column('C:C', 20)
 
-            wb, ws = writer.book, writer.sheets[sheet]
+            # 2. ANALYTICAL REPORT SHEET
+            report_sheet = 'Analytical_Report'
+            blank_header.to_excel(writer, sheet_name=report_sheet, startrow=1, index=False, header=False)
+            df_blank.to_excel(writer, sheet_name=report_sheet, startrow=10, index=False, header=False)
+            
+            s2_start = len(df_blank) + 15
+            sample_header.to_excel(writer, sheet_name=report_sheet, startrow=s2_start + 1, index=False, header=False)
+            df_sample.to_excel(writer, sheet_name=report_sheet, startrow=s2_start + 10, index=False, header=False)
+            
+            s3_start = s2_start + len(df_sample) + 15
+            final_header.to_excel(writer, sheet_name=report_sheet, startrow=s3_start + 1, index=False, header=False)
+            df_final.drop(columns=['Matched_In_Blank?']).to_excel(writer, sheet_name=report_sheet, startrow=s3_start + 10, index=False, header=False)
+
+            ws_rep = writer.sheets[report_sheet]
             title_fmt = wb.add_format({'bold': True, 'font_size': 14, 'bg_color': '#D3D3D3', 'border': 1})
             red_fmt = wb.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
             yellow_fmt = wb.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500'})
 
-            ws.write(0, 0, "TABLE 1: CLEANED SOLVENT BLANK DATA", title_fmt)
-            ws.write(s2_start, 0, "TABLE 2: RAW SAMPLE DATA (EXCLUSION MAPPING)", title_fmt)
-            ws.write(s3_start, 0, "TABLE 3: UNIQUE LIPID FINGERPRINT (FINAL)", title_fmt)
+            ws_rep.write(0, 0, "TABLE 1: CLEANED SOLVENT BLANK DATA", title_fmt)
+            ws_rep.write(s2_start, 0, "TABLE 2: RAW SAMPLE DATA (EXCLUSION MAPPING)", title_fmt)
+            ws_rep.write(s3_start, 0, "TABLE 3: UNIQUE LIPID FINGERPRINT (FINAL)", title_fmt)
 
-            ws.conditional_format(10, 0, 10 + len(df_blank), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_blank.columns)-1)}11="YES"', 'format': yellow_fmt})
-            ws.conditional_format(s2_start + 10, 0, s2_start + 10 + len(df_sample), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_sample.columns)-1)}{s2_start+11}="YES"', 'format': yellow_fmt})
-            ws.conditional_format(0, 0, 5000, 30, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': red_fmt})
+            ws_rep.conditional_format(10, 0, 10 + len(df_blank), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_blank.columns)-1)}11="YES"', 'format': yellow_fmt})
+            ws_rep.conditional_format(s2_start + 10, 0, s2_start + 10 + len(df_sample), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_sample.columns)-1)}{s2_start+11}="YES"', 'format': yellow_fmt})
+            ws_rep.conditional_format(0, 0, 5000, 30, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': red_fmt})
 
-        st.download_button("📥 Download Analytical Report", output.getvalue(), "LipidExpert_Analytical_Report.xlsx")
+        st.download_button("📥 Download Analytical Report with Dashboard", output.getvalue(), "LipidExpert_Analytical_Report.xlsx")
 
     except Exception as e:
         st.error(f"Execution Error: {e}")
