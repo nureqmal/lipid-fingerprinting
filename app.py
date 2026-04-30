@@ -6,11 +6,19 @@ import io
 st.set_page_config(page_title="LipidExpert: Analytical Suite", layout="wide")
 st.title("🧪 LipidExpert: Analytical Suite")
 
+# --- SESSION STATE (Untuk Master Table) ---
+if 'master_list' not in st.session_state:
+    st.session_state.master_list = []
+
 # --- SIDEBAR CONTROL ---
 st.sidebar.header("⚙️ Analytical Controls")
 q_threshold = st.sidebar.slider("Select NIST Quality Threshold", 50, 95, 80, 5)
 rt_tolerance = st.sidebar.slider("Select RT Tolerance (min)", 0.01, 0.20, 0.05, 0.01)
 area_threshold = st.sidebar.slider("Min Area % (Noise Filter)", 0.00, 5.00, 0.00, 0.01)
+
+if st.sidebar.button("🗑️ Reset Master Table"):
+    st.session_state.master_list = []
+    st.sidebar.success("Master Table Cleared!")
 
 st.markdown(f"""
 ---
@@ -22,6 +30,7 @@ st.markdown(f"""
 ---
 """)
 
+# --- CODE EMAS (UNTOUCHED) ---
 def run_strict_procedure(file, q_min, area_min):
     df_full_raw = pd.read_excel(file, sheet_name='LibRes', header=None)
     df_header = df_full_raw.iloc[0:9, :].copy()
@@ -64,26 +73,22 @@ if sample_file and blank_file:
         h_s, df_s = run_strict_procedure(sample_file, q_threshold, area_threshold)
         h_b, df_b = run_strict_procedure(blank_file, q_threshold, area_threshold)
 
-        # --- EXPERT RT SHIFT LOGIC ---
+        # --- EXPERT RT SHIFT LOGIC (UNTOUCHED) ---
         def check_match_expert(row, target_df, tol):
             matches = target_df[target_df['Hit Name'] == row['Hit Name']]
             if matches.empty:
                 return "NO", None
-            
             for _, t_row in matches.iterrows():
                 diff = abs(row['RT (min)'] - t_row['RT (min)'])
                 if diff <= tol:
                     return "YES", diff 
-            
             closest_diff = matches.apply(lambda r: abs(row['RT (min)'] - r['RT (min)']), axis=1).min()
             return "RT_SHIFT_DETECTED", closest_diff
 
-        # Apply logic
         res = df_s.apply(lambda r: check_match_expert(r, df_b, rt_tolerance), axis=1)
         df_s['In_Blank'] = [x[0] for x in res]
         df_s['RT_Diff'] = [x[1] for x in res]
 
-        # --- CRITICAL FIX: Retain both NO and RT_SHIFT_DETECTED ---
         df_final = df_s[df_s['In_Blank'].isin(["NO", "RT_SHIFT_DETECTED"])].copy()
         
         total_sample, excluded, final_count = len(df_s), len(df_s[df_s['In_Blank'] == "YES"]), len(df_final)
@@ -97,7 +102,8 @@ if sample_file and blank_file:
         m4.metric("Sample Purity Score", f"{purity:.1f}%")
 
         # --- DATA ANALYSIS TABS ---
-        t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. 🧠 Expert RT Analysis"])
+        # Tambah Tab 5 untuk Master Table
+        t1, t2, t3, t4, t5 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. 🧠 Expert RT Analysis", "🏆 5. Master PCA Table"])
         
         with t1: 
             def highlight_blank_rt(row):
@@ -128,11 +134,38 @@ if sample_file and blank_file:
                 st.markdown(f"""
                 **Expert Reasoning:** 
                 These compounds (e.g., *{rt_issues['Hit Name'].iloc[0]}*) are **RETAINED** in the final profile. 
-                Significant RT deviation (>{rt_tolerance} min) suggests these analytes are distinct isomeric forms 
-                or different chemical species rather than direct solvent contamination.
+                Significant RT deviation (>{rt_tolerance} min) suggests ini adalah isomer berbeza.
                 """)
             else:
                 st.success("No significant RT shifts detected.")
+
+        # --- MANUAL FILENAME & MASTER LOGIC ---
+        with t5:
+            st.write("### 🏗️ Master Dataset Builder")
+            sample_id = st.text_input("🏷️ Unique Sample ID for PCA", value="OO-HARA-HEX-1")
+            
+            if st.button("➕ Add Current Fingerprint to Master"):
+                # Normalization Area % (Wajib untuk PCA)
+                master_entry = df_final[['Hit Name', 'Area (%)']].copy()
+                master_entry['Sample_ID'] = sample_id
+                st.session_state.master_list.append(master_entry)
+                st.success(f"Added {sample_id} to Master Table!")
+
+            if st.session_state.master_list:
+                # Combine all entries
+                combined_df = pd.concat(st.session_state.master_list)
+                # Pivot: Row = Sample, Column = Hit Name
+                master_pivot = combined_df.pivot(index='Sample_ID', columns='Hit Name', values='Area (%)').fillna(0)
+                
+                st.write("**Current Master Table Preview (Pivoted):**")
+                st.dataframe(master_pivot)
+                
+                # Master Excel Export
+                master_out = io.BytesIO()
+                with pd.ExcelWriter(master_out, engine='xlsxwriter') as writer:
+                    master_pivot.to_excel(writer, sheet_name='PCA_Ready')
+                
+                st.download_button("📥 Download Master Table for PCA", master_out.getvalue(), "Master_PCA_Dataset.xlsx")
 
         st.markdown("---")
         st.info("### 📝 Summary")
@@ -142,11 +175,10 @@ if sample_file and blank_file:
         class_counts.columns = ['Chemical Class', 'Peak Count']
         st.table(class_counts)
 
-        # --- MANUAL FILENAME INPUT (SAFE & STABLE) ---
-        custom_filename = st.text_input("📁 Enter Filename for Export", value="LipidExpert_Report", help="Type your sample name here (e.g. OO-HARA-HEX-1)")
+        # --- EXCEL EXPORT (INDIVIDUAL) ---
+        custom_filename = st.text_input("📁 Enter Filename for Individual Export", value="LipidExpert_Report")
         final_save_name = f"{custom_filename.strip().replace(' ', '_')}.xlsx"
 
-        # --- EXCEL EXPORT ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             wb = writer.book
@@ -164,19 +196,17 @@ if sample_file and blank_file:
                 ws_dash.write(f'B{i}', l, label_fmt); ws_dash.write(f'C{i}', v, val_fmt)
             
             ws_dash.write('B10', 'COLOR LEGEND / GUIDELINE:', wb.add_format({'bold': True, 'underline': True}))
-            ws_dash.write('B11', 'Yellow Row', yellow_fmt); ws_dash.write('C11', 'Matched in Blank (Purged from Fingerprint)')
-            ws_dash.write('B12', 'Navy Blue RT Cell', navy_fmt); ws_dash.write('C12', 'RT Shift Detected (Retained - Distinct Analyte)')
-            ws_dash.write('B13', 'Pink Cell', pink_fmt); ws_dash.write('C13', 'Potential Contaminant (Requires Review)')
+            ws_dash.write('B11', 'Yellow Row', yellow_fmt); ws_dash.write('C11', 'Matched in Blank (Purged)')
+            ws_dash.write('B12', 'Navy Blue RT Cell', navy_fmt); ws_dash.write('C12', 'RT Shift Detected (Retained)')
+            ws_dash.write('B13', 'Pink Cell', pink_fmt); ws_dash.write('C13', 'Potential Contaminant')
             ws_dash.set_column('B:B', 30); ws_dash.set_column('C:C', 85)
 
             rs = 'Analytical_Report'
             h_b.to_excel(writer, sheet_name=rs, startrow=2, index=False, header=False)
             df_b.to_excel(writer, sheet_name=rs, startrow=11, index=False, header=False)
-            
             s2 = len(df_b) + 16
             h_s.to_excel(writer, sheet_name=rs, startrow=s2+1, index=False, header=False)
             df_s.to_excel(writer, sheet_name=rs, startrow=s2+10, index=False, header=False)
-            
             s3 = s2 + len(df_s) + 15
             fh = h_s.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (CORRECTED UNIQUE)"
             fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
@@ -184,11 +214,7 @@ if sample_file and blank_file:
 
             ws_rep = writer.sheets[rs]
             rt_col_idx = df_s.columns.get_loc('RT (min)')
-            status_col_idx = df_s.columns.get_loc('Chemical_Status')
             blank_col_idx = df_s.columns.get_loc('In_Blank')
-
-            for start, limit in [(11, len(df_b)), (s2+10, len(df_s)), (s3+10, len(df_final))]:
-                ws_rep.conditional_format(start, status_col_idx, start + limit, status_col_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': pink_fmt})
 
             ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), len(df_s.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + blank_col_idx)}{s2+11}="YES"', 'format': yellow_fmt})
             ws_rep.conditional_format(s2+10, rt_col_idx, s2+10+len(df_s), rt_col_idx, {'type': 'formula', 'criteria': f'=${chr(65 + blank_col_idx)}{s2+11}="RT_SHIFT_DETECTED"', 'format': navy_fmt})
