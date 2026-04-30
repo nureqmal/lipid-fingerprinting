@@ -48,7 +48,7 @@ def run_strict_procedure(file, q_min, area_min):
     
     df = df[(df['Quality'] >= q_min) & (df['Area (%)'] >= area_min)]
 
-    # --- BRINGING BACK THE FULL CLASSIFICATION LOGIC ---
+    # --- FULL CLASSIFICATION LOGIC ---
     blacklist = ['siloxane', 'phthalate', 'octaxilonaxe', 'bleed', 'plasticizer', 'adipate', 'column bleed']
     contaminants = ['iodo', 'chloro', 'bromo', 'fluoro', 'iodide', 'chloride', 'thiophene', 'benzothiophene', 'naphthalene', 'benzene,']
 
@@ -101,10 +101,9 @@ if sample_file and blank_file:
         # --- ENGLISH INTERPRETATION ---
         st.info("### 🧠 LipidExpert Intelligence")
         purity_status = "High" if purity > 85 else "Moderate" if purity > 60 else "Low"
-        summary_text = f"**Data Integrity Status: {purity_status}**\nThe analysis identified **{final_count} unique biomarkers** after excluding **{excluded} peaks** found in the Solvent Blank. With RT Tolerance set at **±{rt_tolerance} min**."
+        summary_text = f"**Data Integrity Status: {purity_status}**\nThe analysis identified **{final_count} unique biomarkers** after excluding **{excluded} peaks** found in the Solvent Blank."
         st.markdown(summary_text)
 
-        # distribution table (Now fixed!)
         class_counts = df_final['Chemical_Status'].value_counts().reset_index()
         class_counts.columns = ['Chemical Class', 'Peak Count']
         st.table(class_counts)
@@ -127,6 +126,7 @@ if sample_file and blank_file:
             label_fmt = wb.add_format({'bold': True, 'bg_color': '#D9E1F2', 'border': 1})
             val_fmt = wb.add_format({'border': 1, 'align': 'center'})
             yellow_fmt = wb.add_format({'bg_color': '#FFEB9C', 'border': 1})
+            orange_fmt = wb.add_format({'bg_color': '#FFCC00', 'border': 1}) # Orange for Review
             note_fmt = wb.add_format({'italic': True, 'font_color': '#FF0000', 'font_size': 10})
             pca_head_fmt = wb.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1, 'align': 'center'})
 
@@ -138,24 +138,44 @@ if sample_file and blank_file:
                 ws_dash.write(f'B{i}', l, label_fmt)
                 ws_dash.write(f'C{i}', v, val_fmt)
             
+            # LEGEND BOX WITH ORANGE
             ws_dash.write('B11', 'COLOR LEGEND / GUIDELINE:', wb.add_format({'bold': True, 'underline': True}))
-            ws_dash.write('B12', 'Yellow Highlight', yellow_fmt)
-            ws_dash.write('C12', 'Detected in BOTH Sample & Blank (Excluded from Final Profile)', wb.add_format({'font_size': 10}))
+            ws_dash.write('B12', 'Yellow Row', yellow_fmt)
+            ws_dash.write('C12', 'Matched in Blank (Excluded)', wb.add_format({'font_size': 10}))
+            ws_dash.write('B13', 'Orange Cell', orange_fmt)
+            ws_dash.write('C13', 'Review Required (Potential Contaminant)', wb.add_format({'font_size': 10}))
+            
             ws_dash.set_column('B:B', 35); ws_dash.set_column('C:C', 60)
 
             # 2. Analytical Report
             rs = 'Analytical_Report'
             ws_rep = wb.add_worksheet(rs)
-            ws_rep.write('A1', 'NOTE: Rows highlighted in YELLOW indicate compounds matched in both Sample and Blank.', note_fmt)
+            ws_rep.write('A1', 'NOTE: YELLOW Rows = Blank Matched. ORANGE Cells = Review Required (Potential Contaminants).', note_fmt)
+            
             h_b.to_excel(writer, sheet_name=rs, startrow=2, index=False, header=False)
             df_b.to_excel(writer, sheet_name=rs, startrow=11, index=False, header=False)
             s2 = len(df_b) + 16
             h_s.to_excel(writer, sheet_name=rs, startrow=s2+1, index=False, header=False)
             df_s.to_excel(writer, sheet_name=rs, startrow=s2+10, index=False, header=False)
+            
             s3 = s2 + len(df_s) + 15
             fh = h_s.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (CORRECTED UNIQUE)"
             fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
             df_final.drop(columns=['In_Blank']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
+
+            # Apply Conditional Formatting
+            yellow_bg = wb.add_format({'bg_color': '#FFEB9C'})
+            orange_bg = wb.add_format({'bg_color': '#FFCC00'})
+            
+            # Row-wise highlight (Yellow)
+            ws_rep.conditional_format(11, 0, 11 + len(df_b), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_b.columns)-1)}12="YES"', 'format': yellow_bg})
+            ws_rep.conditional_format(s2+10, 0, s2+10 + len(df_s), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_s.columns)-1)}{s2+11}="YES"', 'format': yellow_bg})
+
+            # Cell-wise highlight (Orange) for Chemical_Status column
+            status_col_idx = df_s.columns.get_loc('Chemical_Status')
+            ws_rep.conditional_format(11, status_col_idx, 11 + len(df_b), status_col_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': orange_bg})
+            ws_rep.conditional_format(s2+10, status_col_idx, s2+10 + len(df_s), status_col_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': orange_bg})
+            ws_rep.conditional_format(s3+10, status_col_idx, s3+10 + len(df_final), status_col_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': orange_bg})
 
             # 3. PCA Ready Data Sheet
             ws_pca = wb.add_worksheet('PCA_Ready_Data')
@@ -167,11 +187,6 @@ if sample_file and blank_file:
                 ws_pca.write(0, col_num, name, pca_head_fmt)
                 ws_pca.write(1, col_num, area, val_fmt)
             ws_pca.set_column(1, len(pca_compounds), 20)
-
-            # Apply Conditional Formatting
-            yellow_bg = wb.add_format({'bg_color': '#FFEB9C'})
-            ws_rep.conditional_format(11, 0, 11 + len(df_b), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_b.columns)-1)}12="YES"', 'format': yellow_bg})
-            ws_rep.conditional_format(s2+10, 0, s2+10 + len(df_s), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_s.columns)-1)}{s2+11}="YES"', 'format': yellow_bg})
 
         st.download_button("📥 Download Final Report (PCA Ready)", output.getvalue(), "LipidExpert_Final_Report.xlsx")
     except Exception as e:
