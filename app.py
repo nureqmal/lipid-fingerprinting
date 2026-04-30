@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import io
-import matplotlib.pyplot as plt
 
 # Setup Page Configuration
 st.set_page_config(page_title="LipidExpert: Analytical Suite", layout="wide")
@@ -76,12 +75,13 @@ if sample_file and blank_file:
         df_blank['Matched_In_Sample?'] = df_blank.apply(lambda r: check_match(r, df_sample), axis=1)
         df_final = df_sample[df_sample['Matched_In_Blank?'] == "NO"].copy()
         
-        # Metrics
+        # Metrics Calculation
         total_sample = len(df_sample)
         excluded = len(df_sample[df_sample['Matched_In_Blank?'] == "YES"])
         final_count = len(df_final)
         purity = (final_count / total_sample * 100) if total_sample > 0 else 0
         
+        # UI Display Metrics
         st.subheader("📊 Analysis Summary Metrics")
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total Sample Peaks", f"{total_sample}")
@@ -89,65 +89,77 @@ if sample_file and blank_file:
         m3.metric("Final Unique Compounds", f"{final_count}")
         m4.metric("Sample Purity Score", f"{purity:.1f}%")
 
-        # MODERN PIE CHART (DOUGHNUT)
-        if not df_final.empty:
-            st.write("### 🧬 Lipid Class Distribution")
-            class_counts = df_final['Chemical_Status'].value_counts()
-            
-            fig, ax = plt.subplots(figsize=(8, 4))
-            colors = ['#2E75B6', '#A9D18E', '#FFD966'] # Modern Palette
-            
-            wedges, texts, autotexts = ax.pie(
-                class_counts, 
-                labels=class_counts.index, 
-                autopct='%1.1f%%', 
-                startangle=140, 
-                colors=colors,
-                pctdistance=0.85,
-                wedgeprops={'width': 0.4, 'edgecolor': 'w'} # Makes it a Doughnut
-            )
-            
-            plt.setp(autotexts, size=10, weight="bold", color="black")
-            plt.setp(texts, size=10)
-            ax.set_title("Distribution of Authenticated Lipids", pad=20)
-            st.pyplot(fig)
+        # Class Distribution for Dashboard
+        class_counts = df_final['Chemical_Status'].value_counts()
 
         st.markdown("---")
 
-        # TABS & EXCEL EXPORT (Logic remains the same as previous stable version)
+        # TABS Display
         t1, t2, t3 = st.tabs(["1. Solvent Blank Data", "2. Sample Mapping", "3. Final Unique Fingerprint"])
         with t1: st.dataframe(df_blank.style.apply(lambda x: ['background: #FFEB9C' if x['Matched_In_Sample?'] == 'YES' else '' for _ in x], axis=1))
         with t2: st.dataframe(df_sample.style.apply(lambda x: ['background: #FFEB9C' if x['Matched_In_Blank?'] == 'YES' else '' for _ in x], axis=1))
         with t3: st.dataframe(df_final.drop(columns=['Matched_In_Blank?']))
 
+        # --- EXCEL EXPORT WITH INTEGRATED DASHBOARD ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             # Sheet 1: Dashboard
             ws_dash = writer.book.add_worksheet('Dashboard')
-            header_fmt = writer.book.add_format({'bold': True, 'font_size': 16, 'bg_color': '#2E75B6', 'font_color': 'white', 'border': 1, 'align': 'center'})
+            wb = writer.book
+            
+            # Formats
+            header_fmt = wb.add_format({'bold': True, 'font_size': 16, 'bg_color': '#2E75B6', 'font_color': 'white', 'border': 1, 'align': 'center'})
+            sub_fmt = wb.add_format({'bold': True, 'font_size': 12, 'bg_color': '#D9E1F2', 'border': 1})
+            val_fmt = wb.add_format({'border': 1, 'align': 'center'})
+            
+            # Title
             ws_dash.merge_range('B2:E2', 'LIPIDEXPERT ANALYTICAL SUMMARY', header_fmt)
-            metrics = [('Quality Threshold Used', q_threshold), ('Total Cleaned Sample Peaks', total_sample), ('Blank Matches (Excluded)', excluded), ('Final Unique Biomarkers', final_count), ('Sample Purity Score', f"{purity:.2f}%")]
-            for i, (l, v) in enumerate(metrics, start=4):
-                ws_dash.write(f'B{i}', l, writer.book.add_format({'bold': True, 'bg_color': '#D9E1F2', 'border': 1}))
-                ws_dash.write(f'C{i}', v, writer.book.add_format({'border': 1, 'align': 'center'}))
+            
+            # Section 1: Overall Performance
+            ws_dash.write('B4', 'OVERALL PERFORMANCE', sub_fmt)
+            ws_dash.write('C4', 'VALUE', sub_fmt)
+            
+            metrics = [
+                ('Quality Threshold Used', q_threshold),
+                ('Total Cleaned Sample Peaks', total_sample),
+                ('Blank Matches (Excluded)', excluded),
+                ('Final Unique Biomarkers', final_count),
+                ('Sample Purity Score', f"{purity:.2f}%")
+            ]
+            
+            for i, (l, v) in enumerate(metrics, start=5):
+                ws_dash.write(f'B{i}', l, wb.add_format({'border': 1}))
+                ws_dash.write(f'C{i}', v, val_fmt)
+            
+            # Section 2: Lipid Class Distribution (NEW SECTION)
+            start_class_row = len(metrics) + 7
+            ws_dash.write(f'B{start_class_row}', 'FINAL CLASS DISTRIBUTION', sub_fmt)
+            ws_dash.write(f'C{start_class_row}', 'COUNT', sub_fmt)
+            
+            for i, (cls_name, count) in enumerate(class_counts.items(), start=start_class_row + 1):
+                ws_dash.write(f'B{i}', cls_name, wb.add_format({'border': 1}))
+                ws_dash.write(f'C{i}', count, val_fmt)
+
             ws_dash.set_column('B:B', 35); ws_dash.set_column('C:C', 20)
 
             # Sheet 2: Analytical Report
             rs = 'Analytical_Report'
             blank_header.to_excel(writer, sheet_name=rs, startrow=1, index=False, header=False)
             df_blank.to_excel(writer, sheet_name=rs, startrow=10, index=False, header=False)
+            
             s2 = len(df_blank) + 15
             sample_header.to_excel(writer, sheet_name=rs, startrow=s2+1, index=False, header=False)
             df_sample.to_excel(writer, sheet_name=rs, startrow=s2+10, index=False, header=False)
+            
             s3 = s2 + len(df_sample) + 15
             fh = sample_header.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (CORRECTED UNIQUE PROFILE)"
             fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
             df_final.drop(columns=['Matched_In_Blank?']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
 
-            wb, ws = writer.book, writer.sheets[rs]
+            ws_rep = writer.sheets[rs]
             yellow = wb.add_format({'bg_color': '#FFEB9C'})
-            ws.conditional_format(10, 0, 10 + len(df_blank), 20, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_blank.columns)-1)}11="YES"', 'format': yellow})
-            ws.conditional_format(s2+10, 0, s2+10 + len(df_sample), 20, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_sample.columns)-1)}{s2+11}="YES"', 'format': yellow})
+            ws_rep.conditional_format(10, 0, 10 + len(df_blank), 20, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_blank.columns)-1)}11="YES"', 'format': yellow})
+            ws_rep.conditional_format(s2+10, 0, s2+10 + len(df_sample), 20, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_sample.columns)-1)}{s2+11}="YES"', 'format': yellow})
 
         st.download_button("📥 Download Final Report", output.getvalue(), "LipidExpert_Final_Report.xlsx")
     except Exception as e:
