@@ -8,18 +8,18 @@ st.title("🧪 LipidExpert: Strict Authentication Suite")
 st.markdown("""
 ---
 ### System Overview: Strict Exclusion Mode
-This suite is configured for **Halal Authentication** standards. Any compound detected in the Solvent Blank will be **entirely excluded** from the sample profile.
+This suite is configured for **Halal Authentication** standards. To eliminate the risk of false biomarkers, any compound detected in the Solvent Blank will be **entirely excluded** from the sample profile.
 
 ### Operational Procedure:
-1.  **Metadata Acquisition**: Preservation of original NIST headers (Rows 1–9).
+1.  **Metadata Acquisition**: Preservation of original NIST headers (Rows 1–9) for all validation tables.
 2.  **Quality Thresholding**: Minimum NIST Match Factor of **80**.
-3.  **Expert Classification**: Artifacts and contaminants are discarded.
-4.  **Strict Blank Exclusion**: Compounds in Solvent Blank are completely removed.
+3.  **Expert Classification**: Artifacts and petroleum-based contaminants are discarded.
+4.  **Strict Blank Exclusion**: Compounds in Solvent Blank are completely removed from the final profile.
 ---
 """)
 
 def run_strict_procedure(file):
-    # 1. READ FULL DATA (Header=None to get everything)
+    # 1. READ FULL DATA (Header=None to get everything including Row 0)
     df_full_raw = pd.read_excel(file, sheet_name='LibRes', header=None)
     
     # 2. EXTRACT HEADER (Rows 0-8)
@@ -54,7 +54,7 @@ def run_strict_procedure(file):
     
     return df_header, df_clean
 
-# --- UPLOAD FILES ---
+# --- FILE UPLOADS ---
 col1, col2 = st.columns(2)
 with col1:
     sample_file = st.file_uploader("Upload SAMPLE File", type=['xlsx'])
@@ -63,6 +63,7 @@ with col2:
 
 if sample_file and blank_file:
     try:
+        # Process Sample and Blank
         sample_header, df_sample = run_strict_procedure(sample_file)
         blank_header, df_blank = run_strict_procedure(blank_file)
 
@@ -79,21 +80,25 @@ if sample_file and blank_file:
 
         # --- UI DISPLAY ---
         st.success("Strict Authentication Analysis Complete.")
-        t1, t2, t3 = st.tabs(["1. Cleaned Blank Data", "2. Sample Mapping", "3. Final Unique Fingerprint"])
+        t1, t2, t3 = st.tabs(["1. Cleaned Blank Data", "2. Sample Mapping (Exclusions)", "3. Final Unique Fingerprint"])
         
-        with t1: st.dataframe(df_blank)
-        with t2: st.dataframe(df_sample.style.apply(lambda x: ['background: #FFFFE0' if x['In_Blank?'] == 'YES' else '' for _ in x], axis=1))
-        with t3: st.dataframe(df_final.drop(columns=['In_Blank?']))
+        with t1: 
+            st.dataframe(df_blank)
+        with t2: 
+            st.info("Rows highlighted in Yellow are detected in the blank and will be excluded from the final profile.")
+            # Highlight row in Streamlit UI
+            st.dataframe(df_sample.style.apply(lambda x: ['background: #FFEB9C' if x['In_Blank?'] == 'YES' else '' for _ in x], axis=1))
+        with t3: 
+            st.write(f"Final Profile: {len(df_final)} Unique Compounds Remaining")
+            st.dataframe(df_final.drop(columns=['In_Blank?']))
 
-        # --- EXCEL EXPORT (FIXED HEADER & LABELS) ---
+        # --- EXCEL EXPORT ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             sheet = 'Analytical_Report'
             
             # Table 1: Blank Data
-            # Startrow 1 for header (Row 0 is the Table Title)
             blank_header.to_excel(writer, sheet_name=sheet, startrow=1, index=False, header=False)
-            # Startrow 10 for data (index 9). header=False to avoid double labels.
             df_blank.to_excel(writer, sheet_name=sheet, startrow=10, index=False, header=False)
             
             # Table 2: Raw Sample
@@ -106,7 +111,7 @@ if sample_file and blank_file:
             final_header.to_excel(writer, sheet_name=sheet, startrow=s3_start + 1, index=False, header=False)
             df_final.drop(columns=['In_Blank?']).to_excel(writer, sheet_name=sheet, startrow=s3_start + 10, index=False, header=False)
 
-            # Excel Styling
+            # Excel Styling & Row Highlighting
             wb, ws = writer.book, writer.sheets[sheet]
             title_fmt = wb.add_format({'bold': True, 'font_size': 14, 'bg_color': '#D3D3D3', 'border': 1})
             red_fmt = wb.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
@@ -116,9 +121,19 @@ if sample_file and blank_file:
             ws.write(s2_start, 0, "TABLE 2: RAW SAMPLE (EXCLUSION MAPPING)", title_fmt)
             ws.write(s3_start, 0, "TABLE 3: UNIQUE LIPID FINGERPRINT (FINAL)", title_fmt)
 
-            # Conditional Formatting
+            # FIND THE COLUMN INDEX FOR "In_Blank?" IN TABLE 2
+            # It is the last column of df_sample
+            exclusion_col_idx = len(df_sample.columns) - 1 
+            
+            # APPLY CONDITIONAL FORMATTING TO THE WHOLE ROW based on "YES" in that column
+            # For Table 2 range: from startrow+10 to end of Table 2
+            ws.conditional_format(s2_start + 10, 0, s2_start + 10 + len(df_sample), 25, 
+                                  {'type':     'formula',
+                                   'criteria': f'=${chr(65 + exclusion_col_idx)}{s2_start + 11}="YES"',
+                                   'format':   yellow_fmt})
+            
+            # Highlight 'Review' status (Red)
             ws.conditional_format(0, 0, 5000, 30, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': red_fmt})
-            ws.conditional_format(0, 0, 5000, 30, {'type': 'cell', 'criteria': 'equal to', 'value': '"YES"', 'format': yellow_fmt})
 
         st.download_button("📥 Download Analytical Report", output.getvalue(), "LipidExpert_Analytical_Report.xlsx")
 
