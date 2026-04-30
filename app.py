@@ -2,32 +2,48 @@ import streamlit as st
 import pandas as pd
 import io
 
-# Setup Page
-st.set_page_config(page_title="GCMS Lipid Fingerprint Pro", layout="wide")
-st.title("🧪 GCMS Lipidomics: Final Validation Module")
+# Setup Page Configuration
+st.set_page_config(page_title="LipidExpert: GC-MS Analytical Suite", layout="wide")
+st.title("🧪 LipidExpert: GC-MS Analytical Suite")
 st.markdown("""
-### PhD Standard Data Cleaning & Subtraction
-- **Full Traceability**: Row 0 (Data file name) until Row 8 are strictly preserved.
-- **Subtraction Mapping**: Compounds found in the blank are highlighted in the Raw Sample table.
-- **Red/Yellow Formatting**: Review status (Red) and Subtracted status (Yellow) are color-coded in Excel.
+---
+### System Overview
+LipidExpert is a specialized tool designed to automate the cleaning, validation, and blank subtraction of GC-MS lipidomic data. This suite ensures data integrity by filtering out non-lipid artifacts and providing full traceability of the analytical process.
+
+### Operational Procedure:
+1.  **Metadata Acquisition**: The system strictly preserves the original NIST header (Rows 1–9) for each data source to ensure sample traceability.
+2.  **Quality Thresholding**: Compounds are filtered based on a minimum NIST Match Factor (Quality) of **80**.
+3.  **Expert Classification**:
+    *   **Artifacts**: Known instrument/solvent bleeding (e.g., siloxanes, phthalates) are automatically discarded.
+    *   **Contaminants**: Potential external pollutants (e.g., halogens, petroleum-based sulfur like benzothiophenes) are flagged for manual review.
+    *   **Target Compounds**: Natural lipids and their thermal oxidation products (alkanes, alkenes, aldehydes) are retained.
+4.  **Peak Deduplication**: For multiple hits or recurring peaks, the system selects the entry with the **Maximum Area** for each unique compound name.
+5.  **Blank Subtraction**: 
+    *   The system maps identical compounds between the Sample and the Solvent Blank.
+    *   **Final Area = Sample Area - Blank Area**.
+    *   Compounds reduced to zero or negative area are removed from the final profile.
+6.  **Comparative Reporting**: Generates a triple-table validation report for full transparency.
+---
 """)
 
-def original_cleaning_procedure(file):
-    # 1. PRESERVE ORIGINAL HEADER (Rows 0-8) - Strictly from the very top
-    # Use header=None to ensure we don't miss the first row
+def run_analytical_procedure(file):
+    # 1. READ FULL DATA (Including the very first row)
     df_full_raw = pd.read_excel(file, sheet_name='LibRes', header=None)
-    df_header = df_full_raw.iloc[0:9, :].copy() # Take rows 0 to 8
     
-    # 2. READ MAIN DATA (Starting from row 9)
+    # 2. EXTRACT HEADER (Rows 0-8)
+    # This ensures 'Data file Name' and other metadata are captured
+    df_header = df_full_raw.iloc[0:9, :].copy()
+    
+    # 3. READ MAIN DATASET (Header at Row 9)
     df = pd.read_excel(file, sheet_name='LibRes', header=8)
     df.columns = df.columns.str.strip() 
 
-    # STEP 1: Basic Cleaning
+    # STEP 1: Basic Data Cleaning
     df_clean = df.dropna(subset=['RT (min)', 'Area (Ab*s)']).copy()
     df_clean['Quality'] = pd.to_numeric(df_clean['Quality'], errors='coerce')
     df_clean = df_clean[df_clean['Quality'] >= 80]
 
-    # STEP 2: Expert Classification
+    # STEP 2: Expert Chemical Classification
     blacklist = ['siloxane', 'phthalate', 'octaxilonaxe', 'bleed', 'plasticizer', 'adipate', 'column bleed']
     contaminants = ['iodo', 'chloro', 'bromo', 'fluoro', 'iodide', 'chloride', 'thiophene', 'benzothiophene', 'naphthalene', 'benzene,']
 
@@ -38,79 +54,89 @@ def original_cleaning_procedure(file):
         return "Clean (Lipid/Oxidation Product)"
 
     df_clean['Chemical_Status'] = df_clean['Hit Name'].apply(classify_compound)
+    # Remove Discarded Artifacts
     df_clean = df_clean[df_clean['Chemical_Status'] != "Discard (Artifact/Bleed)"]
 
-    # STEP 3: Deduplication
+    # STEP 3: Deduplication (Peak Picking)
     df_clean = df_clean.sort_values(by='Area (Ab*s)', ascending=False)
     df_clean = df_clean.drop_duplicates(subset=['Hit Name'], keep='first')
     df_clean = df_clean.sort_values(by='RT (min)')
     
     return df_header, df_clean
 
-# --- UPLOAD FILES ---
+# --- FILE UPLOADS ---
 col1, col2 = st.columns(2)
 with col1:
-    sample_file = st.file_uploader("Upload SAMPLE MSRep.xlsx", type=['xlsx'])
+    sample_file = st.file_uploader("Upload SAMPLE File", type=['xlsx'])
 with col2:
-    blank_file = st.file_uploader("Upload BLANK MSRep.xlsx", type=['xlsx'])
+    blank_file = st.file_uploader("Upload BLANK File (Solvent)", type=['xlsx'])
 
 if sample_file and blank_file:
     try:
-        sample_header, df_sample = original_cleaning_procedure(sample_file)
-        blank_header, df_blank = original_cleaning_procedure(blank_file)
+        # Run Procedure
+        sample_header, df_sample = run_analytical_procedure(sample_file)
+        blank_header, df_blank = run_analytical_procedure(blank_file)
 
-        # --- SUBTRACTION MAPPING ---
+        # --- BLANK SUBTRACTION LOGIC ---
         blank_map = dict(zip(df_blank['Hit Name'], df_blank['Area (Ab*s)']))
-        df_sample['Is_In_Blank?'] = df_sample['Hit Name'].apply(lambda x: "YES" if x in blank_map else "NO")
+        df_sample['Subtracted?'] = df_sample['Hit Name'].apply(lambda x: "YES" if x in blank_map else "NO")
 
-        # Create Final Subtracted Data
+        # Compute Final Subtracted Data
         df_final = df_sample.copy()
         df_final['Area (Ab*s)'] = df_final.apply(lambda r: max(0, r['Area (Ab*s)'] - blank_map.get(r['Hit Name'], 0)), axis=1)
         df_final = df_final[df_final['Area (Ab*s)'] > 0]
         
-        # Add Remark to Final Header
+        # Add Remark to Header 0 (Metadata Tracking)
         final_header = sample_header.copy()
-        final_header.iloc[0,0] = str(final_header.iloc[0,0]) + " (BLANK SUBTRACTED)"
+        final_header.iloc[0,0] = f"{final_header.iloc[0,0]} (CORRECTED: BLANK SUBTRACTED)"
 
-        # --- UI TABS ---
-        t1, t2, t3 = st.tabs(["1. Cleaned Blank", "2. Sample (Raw Cleaned)", "3. Final Result"])
-        with t1: st.dataframe(df_blank)
-        with t2: st.dataframe(df_sample.style.apply(lambda x: ['background: #FFFFE0' if x['Is_In_Blank?'] == 'YES' else '' for _ in x], axis=1))
-        with t3: st.dataframe(df_final)
+        # --- UI DISPLAY ---
+        st.success("Analytical Process Complete.")
+        t1, t2, t3 = st.tabs(["1. Solvent Blank Data", "2. Raw Sample (Pre-Subtraction)", "3. Corrected Final Profile"])
+        
+        with t1: 
+            st.write("Cleaned data detected in Solvent Blank")
+            st.dataframe(df_blank)
+        with t2: 
+            st.info("Note: Yellow-highlighted rows are compounds identified in the blank.")
+            st.dataframe(df_sample.style.apply(lambda x: ['background: #FFFFE0' if x['Subtracted?'] == 'YES' else '' for _ in x], axis=1))
+        with t3: 
+            st.write("Final Profile after Blank Subtraction and Filtering")
+            st.dataframe(df_final)
 
-        # --- EXCEL EXPORT ---
+        # --- PROFESSIONAL EXCEL EXPORT ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            sheet = 'Fingerprint_Report'
+            sheet = 'Analytical_Report'
             # Table 1: Blank
             blank_header.to_excel(writer, sheet_name=sheet, startrow=1, index=False, header=False)
             df_blank.to_excel(writer, sheet_name=sheet, startrow=10, index=False)
             
-            # Table 2: Sample
+            # Table 2: Raw Sample
             s2 = len(df_blank) + 15
             sample_header.to_excel(writer, sheet_name=sheet, startrow=s2+1, index=False, header=False)
             df_sample.to_excel(writer, sheet_name=sheet, startrow=s2+10, index=False)
             
-            # Table 3: Final
+            # Table 3: Final Corrected
             s3 = s2 + len(df_sample) + 15
             final_header.to_excel(writer, sheet_name=sheet, startrow=s3+1, index=False, header=False)
             df_final.to_excel(writer, sheet_name=sheet, startrow=s3+10, index=False)
 
-            # Labels & Formats
+            # Excel Styling
             wb, ws = writer.book, writer.sheets[sheet]
-            bold = wb.add_format({'bold': True, 'font_size': 14, 'bg_color': '#D3D3D3'})
-            red = wb.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
-            yellow = wb.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500'})
+            title_fmt = wb.add_format({'bold': True, 'font_size': 14, 'bg_color': '#D3D3D3', 'border': 1})
+            red_fmt = wb.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
+            yellow_fmt = wb.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500'})
 
-            ws.write(0, 0, "TABLE 1: CLEANED SOLVENT BLANK DATA", bold)
-            ws.write(s2, 0, "TABLE 2: CLEANED RAW SAMPLE DATA (SUBTRACTION TRACKER)", bold)
-            ws.write(s3, 0, "TABLE 3: FINAL SUBTRACTED LIPID PROFILE", bold)
+            ws.write(0, 0, "TABLE 1: CLEANED SOLVENT BLANK DATA", title_fmt)
+            ws.write(s2, 0, "TABLE 2: RAW SAMPLE DATA (SUBTRACTION MAPPING)", title_fmt)
+            ws.write(s3, 0, "TABLE 3: CORRECTED FINAL LIPID PROFILE", title_fmt)
 
-            # Apply conditional colors
-            ws.conditional_format(0, 0, 5000, 30, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': red})
-            ws.conditional_format(0, 0, 5000, 30, {'type': 'cell', 'criteria': 'equal to', 'value': '"YES"', 'format': yellow})
+            # Conditional Formatting for Review and Subtraction
+            ws.conditional_format(0, 0, 5000, 30, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': red_fmt})
+            ws.conditional_format(0, 0, 5000, 30, {'type': 'cell', 'criteria': 'equal to', 'value': '"YES"', 'format': yellow_fmt})
 
-        st.download_button("📥 Download PhD Validation Report", output.getvalue(), "GCMS_Final_Triple_Report.xlsx")
+        st.download_button("📥 Download Analytical Report", output.getvalue(), "LipidExpert_Analytical_Report.xlsx")
 
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Execution Error: {e}")
