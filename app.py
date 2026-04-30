@@ -35,6 +35,7 @@ def run_strict_procedure(file, q_min, area_min):
     df['Area (%)'] = (df['Area (Ab*s)'] / total_area) * 100
     df = df[(df['Quality'] >= q_min) & (df['Area (%)'] >= area_min)]
 
+    # --- CLASSIFICATION CRITERIA ---
     blacklist = ['siloxane', 'phthalate', 'octaxilonaxe', 'bleed', 'plasticizer', 'adipate', 'column bleed']
     contaminants = ['iodo', 'chloro', 'bromo', 'fluoro', 'iodide', 'chloride', 'thiophene', 'benzothiophene', 'naphthalene', 'benzene,']
 
@@ -51,7 +52,7 @@ def run_strict_procedure(file, q_min, area_min):
     return df_header, df.sort_values(by='RT (min)')
 
 # --- FILE UPLOAD SECTION ---
-st.warning("⚠️ **IMPORTANT**: Please ensure your files are in **.xlsx** format. Older **.xls** formats are not supported.")
+st.warning("⚠️ **IMPORTANT**: Please ensure your files are in **.xlsx** format (Microsoft Excel Worksheet). Older **.xls** formats are not supported.")
 
 col1, col2 = st.columns(2)
 with col1: 
@@ -64,7 +65,7 @@ if sample_file and blank_file:
         h_s, df_s = run_strict_procedure(sample_file, q_threshold, area_threshold)
         h_b, df_b = run_strict_procedure(blank_file, q_threshold, area_threshold)
 
-        # --- EXPERT RT SHIFT LOGIC ---
+        # --- EXPERT RT SHIFT LOGIC (The "Emas" Add-on) ---
         def check_match_expert(row, target_df, tol):
             matches = target_df[target_df['Hit Name'] == row['Hit Name']]
             if matches.empty:
@@ -73,8 +74,9 @@ if sample_file and blank_file:
             for _, t_row in matches.iterrows():
                 diff = abs(row['RT (min)'] - t_row['RT (min)'])
                 if diff <= tol:
-                    return "YES", diff
+                    return "YES", diff # Direct match (Blank)
             
+            # If name matches but NO RT is within tolerance
             closest_diff = matches.apply(lambda r: abs(row['RT (min)'] - r['RT (min)']), axis=1).min()
             return "RT_SHIFT_DETECTED", closest_diff
 
@@ -83,8 +85,10 @@ if sample_file and blank_file:
         df_s['In_Blank'] = [x[0] for x in res]
         df_s['RT_Diff'] = [x[1] for x in res]
 
+        # Final filtering remains the same
         df_final = df_s[df_s['In_Blank'] == "NO"].copy()
         
+        # Metrics Dashboard remains the same
         total_sample, excluded, final_count = len(df_s), len(df_s[df_s['In_Blank'] == "YES"]), len(df_final)
         purity = (final_count / total_sample * 100) if total_sample > 0 else 0
         
@@ -95,27 +99,15 @@ if sample_file and blank_file:
         m3.metric("Final Unique Compounds", final_count)
         m4.metric("Sample Purity Score", f"{purity:.1f}%")
 
-        # --- DATA ANALYSIS TABS ---
+        # --- DATA ANALYSIS TABS (Updated with Tab 4) ---
         t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. 🧠 Expert RT Analysis"])
         
         with t1: 
-            # Highlight RT cell in Blank if it exists in Sample but with shift
-            def highlight_blank_rt(row):
-                matches = df_s[(df_s['Hit Name'] == row['Hit Name']) & (df_s['In_Blank'] == "RT_SHIFT_DETECTED")]
-                return ['background-color: #002060; color: white' if (col == 'RT (min)' and not matches.empty) else '' for col in row.index]
-            st.dataframe(df_b.style.apply(highlight_blank_rt, axis=1))
+            st.dataframe(df_b.style.apply(lambda x: ['background: #FFEB9C' if any(abs(x['RT (min)'] - r['RT (min)']) <= rt_tolerance for _, r in df_s[df_s['Hit Name'] == x['Hit Name']].iterrows()) else '' for _ in x], axis=1))
         
         with t2: 
-            # Yellow for row (Match), Navy Blue for RT cell (Shift)
-            def highlight_sample(row):
-                styles = ['' for _ in row.index]
-                if row['In_Blank'] == "YES":
-                    styles = ['background-color: #FFEB9C' for _ in row.index]
-                elif row['In_Blank'] == "RT_SHIFT_DETECTED":
-                    rt_idx = row.index.get_loc('RT (min)')
-                    styles[rt_idx] = 'background-color: #002060; color: white'
-                return styles
-            st.dataframe(df_s.style.apply(highlight_sample, axis=1))
+            # Blue highlight for RT shifts!
+            st.dataframe(df_s.style.apply(lambda x: ['background: #FFEB9C' if x['In_Blank'] == 'YES' else 'background: #E8F8FF' if x['In_Blank'] == 'RT_SHIFT_DETECTED' else '' for _ in x], axis=1))
         
         with t3: 
             st.dataframe(df_final.drop(columns=['In_Blank', 'RT_Diff']))
@@ -126,17 +118,25 @@ if sample_file and blank_file:
             if not rt_issues.empty:
                 st.info(f"Found **{len(rt_issues)}** compounds with same Hit Name but significant RT shifts (> {rt_tolerance} min).")
                 st.table(rt_issues[['Hit Name', 'RT (min)', 'RT_Diff']])
-                st.markdown(f"**Expert Reasoning:** These peaks (highlighted in Navy Blue RT cells) are **RETAINED**. Significant RT deviation suggests distinct isomeric forms or matrix-induced shifts, not direct solvent contamination.")
+                st.markdown(f"""
+                **Expert Reasoning:** 
+                These compounds (e.g., *{rt_issues['Hit Name'].iloc[0]}*) are **RETAINED** in your final profile. 
+                Although they share a NIST library name with the blank, the RT difference (>{rt_tolerance} min) indicates 
+                they are likely distinct isomers or different analytes. This prevents over-purging of potential biomarkers.
+                """)
             else:
-                st.success("No significant RT shifts detected.")
+                st.success("No significant RT shifts detected. All library matches were within tolerance.")
 
+        # --- BOTTOM SUMMARY ---
         st.markdown("---")
         st.info("### 📝 Summary")
         purity_status = "High" if purity > 85 else "Moderate" if purity > 60 else "Low"
         st.markdown(f"**Data Integrity Status: {purity_status}**")
-        st.table(df_final['Chemical_Status'].value_counts().reset_index())
+        class_counts = df_final['Chemical_Status'].value_counts().reset_index()
+        class_counts.columns = ['Chemical Class', 'Peak Count']
+        st.table(class_counts)
 
-        # --- EXCEL EXPORT ---
+        # --- EXCEL EXPORT (Maintain Emas Structure) ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             wb = writer.book
@@ -144,7 +144,7 @@ if sample_file and blank_file:
             label_fmt = wb.add_format({'bold': True, 'bg_color': '#D9E1F2', 'border': 1})
             val_fmt = wb.add_format({'border': 1, 'align': 'center'})
             yellow_fmt = wb.add_format({'bg_color': '#FFEB9C', 'border': 1})
-            navy_fmt = wb.add_format({'bg_color': '#002060', 'font_color': 'white', 'border': 1})
+            blue_fmt = wb.add_format({'bg_color': '#E8F8FF', 'border': 1})
             pink_fmt = wb.add_format({'bg_color': '#FFC0CB', 'border': 1})
 
             ws_dash = wb.add_worksheet('Dashboard')
@@ -154,8 +154,9 @@ if sample_file and blank_file:
                 ws_dash.write(f'B{i}', l, label_fmt); ws_dash.write(f'C{i}', v, val_fmt)
             
             ws_dash.write('B10', 'COLOR LEGEND:', wb.add_format({'bold': True, 'underline': True}))
-            ws_dash.write('B11', 'Yellow Row', yellow_fmt); ws_dash.write('C11', 'Blank Match (Purged from Fingerprint)')
-            ws_dash.write('B12', 'Navy Blue RT Cell', navy_fmt); ws_dash.write('C12', 'RT Shift Detected (Retained - Distinct Analyte)')
+            ws_dash.write('B11', 'Yellow', yellow_fmt); ws_dash.write('C11', 'Blank Match (Purged)')
+            ws_dash.write('B12', 'Light Blue', blue_fmt); ws_dash.write('C12', 'RT Shift Detected (Retained - Different Isomer)')
+            ws_dash.write('B13', 'Pink Cell', pink_fmt); ws_dash.write('C13', 'Potential Contaminant (Requires Review)')
             ws_dash.set_column('B:B', 30); ws_dash.set_column('C:C', 70)
 
             rs = 'Analytical_Report'
@@ -169,26 +170,15 @@ if sample_file and blank_file:
             fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
             df_final.drop(columns=['In_Blank', 'RT_Diff']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
 
+            # Highlighting
             ws_rep = writer.sheets[rs]
-            rt_col_idx = df_s.columns.get_loc('RT (min)')
             status_col_idx = df_s.columns.get_loc('Chemical_Status')
-            blank_col_idx = df_s.columns.get_loc('In_Blank')
-
-            # Pink Cells for Contaminants
             for start, limit in [(11, len(df_b)), (s2+10, len(df_s)), (s3+10, len(df_final))]:
                 ws_rep.conditional_format(start, status_col_idx, start + limit, status_col_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': pink_fmt})
-
-            # Sample Section Highlights
-            # 1. Yellow Row for Matches
-            ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), len(df_s.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + blank_col_idx)}{s2+11}="YES"', 'format': yellow_fmt})
-            # 2. Navy Blue Cell for RT Shifts
-            ws_rep.conditional_format(s2+10, rt_col_idx, s2+10+len(df_s), rt_col_idx, {'type': 'formula', 'criteria': f'=${chr(65 + blank_col_idx)}{s2+11}="RT_SHIFT_DETECTED"', 'format': navy_fmt})
-
-            # Blank Section - Navy Blue Cell for RT Shifts
-            # (Note: Using a slightly different approach for blank since In_Blank isn't in df_b)
-            for i, row in df_b.iterrows():
-                if any((df_s['Hit Name'] == row['Hit Name']) & (df_s['In_Blank'] == "RT_SHIFT_DETECTED")):
-                    ws_rep.write(11 + i, rt_col_idx, row['RT (min)'], navy_fmt)
+            
+            # Yellow Match & Blue Shift
+            ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), 25, {'type': 'formula', 'criteria': f'=${chr(65 + df_s.columns.get_loc("In_Blank"))}{s2+11}="YES"', 'format': yellow_fmt})
+            ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), 25, {'type': 'formula', 'criteria': f'=${chr(65 + df_s.columns.get_loc("In_Blank"))}{s2+11}="RT_SHIFT_DETECTED"', 'format': blue_fmt})
 
             # PCA Sheet
             ws_pca = wb.add_worksheet('PCA_Ready_Data')
