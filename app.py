@@ -4,14 +4,12 @@ import io
 
 # Setup Page
 st.set_page_config(page_title="GCMS Lipid Fingerprint Pro", layout="wide")
-st.title("🧪 GCMS Lipid Fingerprinting Automator")
+st.title("🧪 GCMS Lipidomics: Final Validation Module")
 st.markdown("""
-### Data Integrity & Automation Module (Blank Subtraction Version)
-This application automates the cleaning and blank subtraction process:
-1. **Quality Control**: Both Sample and Blank must meet a minimum NIST Match Factor of 80.
-2. **Expert Labeling**: Categorizes *Artifacts*, *Halogens*, and *Petroleum Contaminants*.
-3. **Blank Subtraction**: Subtracts Blank Area from Sample Area for identical compounds.
-4. **Triple Validation**: Provides data for Blank, Raw Sample, and Final Subtracted Result.
+### PhD Standard Data Cleaning & Subtraction
+1. **Full Metadata**: Each table retains its original NIST header for traceability.
+2. **Subtraction Mapping**: Compounds found in the blank are highlighted in the Raw Sample table.
+3. **Chemical Integrity**: Artifacts and Halogens are labeled and color-coded.
 """)
 
 # --- HELPER FUNCTION: THE ORIGINAL PROCEDURE ---
@@ -43,15 +41,11 @@ def original_cleaning_procedure(file):
         return "Clean (Lipid/Oxidation Product)"
 
     df_clean['Chemical_Status'] = df_clean['Hit Name'].apply(classify_compound)
-
-    # STEP 4: FILTER OUT DISCARDED ARTIFACTS
     df_clean = df_clean[df_clean['Chemical_Status'] != "Discard (Artifact/Bleed)"]
 
-    # STEP 5: DEDUPLICATION (Peak Picking - Max Area)
+    # STEP 4: DEDUPLICATION (Peak Picking - Max Area)
     df_clean = df_clean.sort_values(by='Area (Ab*s)', ascending=False)
     df_clean = df_clean.drop_duplicates(subset=['Hit Name'], keep='first')
-
-    # STEP 6: SORT BY RETENTION TIME
     df_clean = df_clean.sort_values(by='RT (min)')
     
     return df_header, df_clean
@@ -59,82 +53,82 @@ def original_cleaning_procedure(file):
 # --- UPLOAD FILES ---
 col1, col2 = st.columns(2)
 with col1:
-    sample_file = st.file_uploader("Upload your SAMPLE MSRep.xlsx", type=['xlsx'])
+    sample_file = st.file_uploader("Upload SAMPLE MSRep.xlsx", type=['xlsx'])
 with col2:
-    blank_file = st.file_uploader("Upload your BLANK MSRep.xlsx", type=['xlsx'])
+    blank_file = st.file_uploader("Upload BLANK MSRep.xlsx", type=['xlsx'])
 
 if sample_file and blank_file:
     try:
         # Run original procedure on BOTH files
         sample_header, df_sample = original_cleaning_procedure(sample_file)
-        _, df_blank = original_cleaning_procedure(blank_file)
+        blank_header, df_blank = original_cleaning_procedure(blank_file)
 
-        # --- BLANK SUBTRACTION LOGIC ---
+        # --- SUBTRACTION MAPPING ---
+        blank_compounds = df_blank['Hit Name'].unique()
         blank_map = dict(zip(df_blank['Hit Name'], df_blank['Area (Ab*s)']))
         
+        # Mark Raw Sample: Which one will be subtracted?
+        df_sample['Is_In_Blank?'] = df_sample['Hit Name'].apply(lambda x: "YES" if x in blank_compounds else "NO")
+
+        # Create Final Subtracted Data
         df_final = df_sample.copy()
-        df_final['Original_Area'] = df_final['Area (Ab*s)']
-        
         def do_subtraction(row):
             b_area = blank_map.get(row['Hit Name'], 0)
             diff = row['Area (Ab*s)'] - b_area
             return diff if diff > 0 else 0
 
         df_final['Area (Ab*s)'] = df_final.apply(do_subtraction, axis=1)
-        df_final = df_final[df_final['Area (Ab*s)'] > 0] # Remove if area becomes 0
-
-        # --- DISPLAY RESULTS IN TABS ---
-        st.success(f"Success! Processed Sample and Blank according to your PhD procedure.")
+        df_final = df_final[df_final['Area (Ab*s)'] > 0]
         
-        tab1, tab2, tab3 = st.tabs(["1. Solvent Blank (Cleaned)", "2. Raw Sample (Cleaned)", "3. Final Subtracted Result"])
+        # Add Remark to Final Header
+        final_header = sample_header.copy()
+        final_header.iloc[0,0] = str(final_header.iloc[0,0]) + " (BLANK SUBTRACTED)"
+
+        # --- UI DISPLAY ---
+        st.success("Processing Complete!")
+        tab1, tab2, tab3 = st.tabs(["1. Cleaned Blank", "2. Sample (Highlighting Subtractions)", "3. Final Subtracted Result"])
         
         with tab1:
-            st.dataframe(df_blank[['Hit Name', 'RT (min)', 'Area (Ab*s)', 'Quality', 'Chemical_Status']])
+            st.dataframe(df_blank)
         with tab2:
-            st.dataframe(df_sample[['Hit Name', 'RT (min)', 'Area (Ab*s)', 'Quality', 'Chemical_Status']])
+            st.info("Yellow rows (if any) indicate compounds also found in the blank.")
+            st.dataframe(df_sample.style.apply(lambda x: ['background: #FFFFE0' if x['Is_In_Blank?'] == 'YES' else '' for _ in x], axis=1))
         with tab3:
-            st.dataframe(df_final[['Hit Name', 'RT (min)', 'Original_Area', 'Area (Ab*s)', 'Quality', 'Chemical_Status']])
+            st.dataframe(df_final)
 
-        # --- DOWNLOAD PROCESS WITH COLOR FORMATTING ---
+        # --- EXCEL EXPORT ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            # Create the Triple-Validation Report in one sheet
-            sheet_name = 'Fingerprint_Data'
-            bold_fmt = writer.book.add_format({'bold': True, 'font_size': 12})
-            red_fmt = writer.book.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
-
-            # Table 1: Blank
-            pd.DataFrame([["TABLE 1: CLEANED SOLVENT BLANK DATA"]]).to_excel(writer, index=False, header=False, sheet_name=sheet_name, startrow=0)
-            df_blank.to_excel(writer, index=False, sheet_name=sheet_name, startrow=1)
-
-            # Table 2: Raw Sample
-            start_row_2 = len(df_blank) + 4
-            pd.DataFrame([["TABLE 2: CLEANED RAW SAMPLE DATA"]]).to_excel(writer, index=False, header=False, sheet_name=sheet_name, startrow=start_row_2)
-            df_sample.to_excel(writer, index=False, sheet_name=sheet_name, startrow=start_row_2 + 1)
-
-            # Table 3: Final Subtracted Result
-            start_row_3 = start_row_2 + len(df_sample) + 4
-            pd.DataFrame([["TABLE 3: FINAL SUBTRACTED LIPID PROFILE"]]).to_excel(writer, index=False, header=False, sheet_name=sheet_name, startrow=start_row_3)
-            sample_header.to_excel(writer, index=False, header=False, sheet_name=sheet_name, startrow=start_row_3 + 1)
-            df_final.to_excel(writer, index=False, sheet_name=sheet_name, startrow=start_row_3 + 10)
-
-            # Applying Formats
-            worksheet = writer.sheets[sheet_name]
-            worksheet.write(0, 0, "TABLE 1: CLEANED SOLVENT BLANK DATA", bold_fmt)
-            worksheet.write(start_row_2, 0, "TABLE 2: CLEANED RAW SAMPLE DATA", bold_fmt)
-            worksheet.write(start_row_3, 0, "TABLE 3: FINAL SUBTRACTED LIPID PROFILE", bold_fmt)
+            sheet = 'Validation_Report'
+            df_blank.to_excel(writer, sheet_name=sheet, startrow=9, index=False)
+            blank_header.to_excel(writer, sheet_name=sheet, startrow=0, index=False, header=False)
             
-            # Highlight 'Review' status in Red (Last column)
-            status_col_idx = len(df_final.columns) - 1
-            worksheet.conditional_format(0, status_col_idx, 1000, status_col_idx,
-                                         {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': red_fmt})
+            start_row_sample = len(df_blank) + 12
+            df_sample.to_excel(writer, sheet_name=sheet, startrow=start_row_sample + 9, index=False)
+            sample_header.to_excel(writer, sheet_name=sheet, startrow=start_row_sample, index=False, header=False)
+            
+            start_row_final = start_row_sample + len(df_sample) + 12
+            df_final.to_excel(writer, sheet_name=sheet, startrow=start_row_final + 9, index=False)
+            final_header.to_excel(writer, sheet_name=sheet, startrow=start_row_final, index=False, header=False)
 
-        st.download_button(
-            label="📥 Download Professional Triple-Validation Report",
-            data=output.getvalue(),
-            file_name="GCMS_Lipid_Final_Report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+            # Formats
+            workbook = writer.book
+            worksheet = writer.sheets[sheet]
+            bold = workbook.add_format({'bold': True, 'font_size': 14})
+            red_fmt = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
+            yellow_fmt = workbook.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500'})
+
+            # Labels
+            worksheet.write(0, 0, "TABLE 1: CLEANED BLANT DATA", bold)
+            worksheet.write(start_row_sample, 0, "TABLE 2: RAW SAMPLE (BEFORE SUBTRACTION)", bold)
+            worksheet.write(start_row_final, 0, "TABLE 3: FINAL LIPID PROFILE (SUBTRACTED)", bold)
+
+            # Formatting Review Status
+            status_idx = len(df_final.columns) - 1 # Chemical_Status usually last or near last
+            worksheet.conditional_format(0, 0, 2000, 20, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': red_fmt})
+            worksheet.conditional_format(0, 0, 2000, 20, {'type': 'cell', 'criteria': 'equal to', 'value': '"YES"', 'format': yellow_fmt})
+
+        st.download_button("📥 Download Final Triple-Validation Report", output.getvalue(), "GCMS_PhD_Final_Report.xlsx")
 
     except Exception as e:
-        st.error(f"Technical Error: {e}")
+        st.error(f"Error: {e}")
