@@ -48,10 +48,14 @@ def run_strict_procedure(file, q_min, area_min):
     
     df = df[(df['Quality'] >= q_min) & (df['Area (%)'] >= area_min)]
 
+    # --- BRINGING BACK THE FULL CLASSIFICATION LOGIC ---
     blacklist = ['siloxane', 'phthalate', 'octaxilonaxe', 'bleed', 'plasticizer', 'adipate', 'column bleed']
+    contaminants = ['iodo', 'chloro', 'bromo', 'fluoro', 'iodide', 'chloride', 'thiophene', 'benzothiophene', 'naphthalene', 'benzene,']
+
     def classify_compound(name):
         n = str(name).lower()
         if any(x in n for x in blacklist): return "Discard (Artifact)"
+        if any(x in n for x in contaminants): return "Review (Potential Contaminant)"
         return "Clean (Lipid/Oxidation)"
 
     df['Chemical_Status'] = df['Hit Name'].apply(classify_compound)
@@ -97,10 +101,10 @@ if sample_file and blank_file:
         # --- ENGLISH INTERPRETATION ---
         st.info("### 🧠 LipidExpert Intelligence")
         purity_status = "High" if purity > 85 else "Moderate" if purity > 60 else "Low"
-        noise_note = f"Noise filtering at {area_threshold}% has successfully refined the biomarker profile." if area_threshold > 0 else "Baseline noise filtering is currently inactive."
         summary_text = f"**Data Integrity Status: {purity_status}**\nThe analysis identified **{final_count} unique biomarkers** after excluding **{excluded} peaks** found in the Solvent Blank. With RT Tolerance set at **±{rt_tolerance} min**."
         st.markdown(summary_text)
 
+        # distribution table (Now fixed!)
         class_counts = df_final['Chemical_Status'].value_counts().reset_index()
         class_counts.columns = ['Chemical Class', 'Peak Count']
         st.table(class_counts)
@@ -153,15 +157,12 @@ if sample_file and blank_file:
             fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
             df_final.drop(columns=['In_Blank']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
 
-            # 3. PCA Ready Data Sheet (THE NEW PART)
+            # 3. PCA Ready Data Sheet
             ws_pca = wb.add_worksheet('PCA_Ready_Data')
-            # Susun Hit Name melintang (Row 1), Area (Row 2)
             pca_compounds = df_final['Hit Name'].tolist()
             pca_areas = df_final['Area (Ab*s)'].tolist()
-            
             ws_pca.write(0, 0, 'Compound (Hit Name)', pca_head_fmt)
             ws_pca.write(1, 0, 'Area Absorbance', wb.add_format({'bold': True, 'border': 1}))
-            
             for col_num, (name, area) in enumerate(zip(pca_compounds, pca_areas), start=1):
                 ws_pca.write(0, col_num, name, pca_head_fmt)
                 ws_pca.write(1, col_num, area, val_fmt)
