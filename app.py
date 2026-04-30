@@ -8,18 +8,18 @@ st.title("🧪 LipidExpert: Strict Authentication Suite")
 st.markdown("""
 ---
 ### System Overview: Strict Exclusion Mode
-This suite is configured for **Halal Authentication** standards. To eliminate the risk of false biomarkers, any compound detected in the Solvent Blank will be **entirely excluded** from the sample profile.
+This suite is configured for **Halal Authentication** standards. Any compound detected in the Solvent Blank will be **entirely excluded** from the sample profile.
 
 ### Operational Procedure:
-1.  **Metadata Acquisition**: Preservation of original NIST headers (Rows 1–9) for all validation tables.
+1.  **Metadata Acquisition**: Preservation of original NIST headers (Rows 1–9).
 2.  **Quality Thresholding**: Minimum NIST Match Factor of **80**.
-3.  **Expert Classification**: Artifacts and petroleum-based contaminants are discarded.
-4.  **Strict Blank Exclusion**: Any compound present in the Solvent Blank is completely removed from the final profile.
+3.  **Expert Classification**: Artifacts and contaminants are discarded.
+4.  **Strict Blank Exclusion**: Compounds in Solvent Blank are completely removed.
 ---
 """)
 
 def run_strict_procedure(file):
-    # 1. READ FULL DATA (Including Row 0 for Metadata)
+    # 1. READ FULL DATA (Header=None to get everything)
     df_full_raw = pd.read_excel(file, sheet_name='LibRes', header=None)
     
     # 2. EXTRACT HEADER (Rows 0-8)
@@ -54,7 +54,7 @@ def run_strict_procedure(file):
     
     return df_header, df_clean
 
-# --- FILE UPLOADS ---
+# --- UPLOAD FILES ---
 col1, col2 = st.columns(2)
 with col1:
     sample_file = st.file_uploader("Upload SAMPLE File", type=['xlsx'])
@@ -63,7 +63,6 @@ with col2:
 
 if sample_file and blank_file:
     try:
-        # Process Sample and Blank
         sample_header, df_sample = run_strict_procedure(sample_file)
         blank_header, df_blank = run_strict_procedure(blank_file)
 
@@ -86,24 +85,26 @@ if sample_file and blank_file:
         with t2: st.dataframe(df_sample.style.apply(lambda x: ['background: #FFFFE0' if x['In_Blank?'] == 'YES' else '' for _ in x], axis=1))
         with t3: st.dataframe(df_final.drop(columns=['In_Blank?']))
 
-        # --- EXCEL EXPORT (FIXED METADATA) ---
+        # --- EXCEL EXPORT (FIXED HEADER & LABELS) ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             sheet = 'Analytical_Report'
             
             # Table 1: Blank Data
+            # Startrow 1 for header (Row 0 is the Table Title)
             blank_header.to_excel(writer, sheet_name=sheet, startrow=1, index=False, header=False)
-            df_blank.to_excel(writer, sheet_name=sheet, startrow=10, index=False)
+            # Startrow 10 for data (index 9). header=False to avoid double labels.
+            df_blank.to_excel(writer, sheet_name=sheet, startrow=10, index=False, header=False)
             
-            # Table 2: Raw Sample (With exclusion mapping)
+            # Table 2: Raw Sample
             s2_start = len(df_blank) + 15
             sample_header.to_excel(writer, sheet_name=sheet, startrow=s2_start + 1, index=False, header=False)
-            df_sample.to_excel(writer, sheet_name=sheet, startrow=s2_start + 10, index=False)
+            df_sample.to_excel(writer, sheet_name=sheet, startrow=s2_start + 10, index=False, header=False)
             
             # Table 3: Final Unique Profile
             s3_start = s2_start + len(df_sample) + 15
             final_header.to_excel(writer, sheet_name=sheet, startrow=s3_start + 1, index=False, header=False)
-            df_final.drop(columns=['In_Blank?']).to_excel(writer, sheet_name=sheet, startrow=s3_start + 10, index=False)
+            df_final.drop(columns=['In_Blank?']).to_excel(writer, sheet_name=sheet, startrow=s3_start + 10, index=False, header=False)
 
             # Excel Styling
             wb, ws = writer.book, writer.sheets[sheet]
