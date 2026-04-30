@@ -69,24 +69,17 @@ if sample_file and blank_file:
             matches = target_df[target_df['Hit Name'] == row['Hit Name']]
             if matches.empty:
                 return "NO", None
-            
             for _, t_row in matches.iterrows():
                 diff = abs(row['RT (min)'] - t_row['RT (min)'])
-                if diff <= tol:
-                    return "YES", diff 
-            
+                if diff <= tol: return "YES", diff 
             closest_diff = matches.apply(lambda r: abs(row['RT (min)'] - r['RT (min)']), axis=1).min()
             return "RT_SHIFT_DETECTED", closest_diff
 
-        # Apply logic
         res = df_s.apply(lambda r: check_match_expert(r, df_b, rt_tolerance), axis=1)
         df_s['In_Blank'] = [x[0] for x in res]
         df_s['RT_Diff'] = [x[1] for x in res]
-
-        # --- RETAIN both NO and RT_SHIFT_DETECTED ---
         df_final = df_s[df_s['In_Blank'].isin(["NO", "RT_SHIFT_DETECTED"])].copy()
         
-        # Metrics Dashboard
         total_sample, excluded, final_count = len(df_s), len(df_s[df_s['In_Blank'] == "YES"]), len(df_final)
         purity = (final_count / total_sample * 100) if total_sample > 0 else 0
         
@@ -97,75 +90,48 @@ if sample_file and blank_file:
         m3.metric("Final Unique Compounds", final_count)
         m4.metric("Sample Purity Score", f"{purity:.1f}%")
 
-        # --- DATA ANALYSIS TABS ---
+        # --- TABS ---
         t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. 🧠 Expert RT Analysis"])
-        
-        with t1: 
-            def highlight_blank_rt(row):
-                matches = df_s[(df_s['Hit Name'] == row['Hit Name']) & (df_s['In_Blank'] == "RT_SHIFT_DETECTED")]
-                return ['background-color: #002060; color: white' if (col == 'RT (min)' and not matches.empty) else '' for col in row.index]
-            st.dataframe(df_b.style.apply(highlight_blank_rt, axis=1))
-        
-        with t2: 
-            def highlight_sample(row):
-                styles = ['' for _ in row.index]
-                if row['In_Blank'] == "YES":
-                    styles = ['background-color: #FFEB9C' for _ in row.index]
-                elif row['In_Blank'] == "RT_SHIFT_DETECTED":
-                    rt_idx = row.index.get_loc('RT (min)')
-                    styles[rt_idx] = 'background-color: #002060; color: white'
-                return styles
-            st.dataframe(df_s.style.apply(highlight_sample, axis=1))
-        
-        with t3: 
-            st.dataframe(df_final.drop(columns=['In_Blank', 'RT_Diff']))
-
+        with t1: st.dataframe(df_b)
+        with t2: st.dataframe(df_s)
+        with t3: st.dataframe(df_final.drop(columns=['In_Blank', 'RT_Diff']))
         with t4:
             st.write("### 🧬 RT Shift Discussion Logic")
             rt_issues = df_s[df_s['In_Blank'] == "RT_SHIFT_DETECTED"]
             if not rt_issues.empty:
-                st.info(f"Found **{len(rt_issues)}** compounds with same Hit Name but significant RT shifts (> {rt_tolerance} min).")
                 st.table(rt_issues[['Hit Name', 'RT (min)', 'RT_Diff']])
-                st.markdown(f"""
-                **Expert Reasoning:** 
-                These compounds (e.g., *{rt_issues['Hit Name'].iloc[0]}*) are **RETAINED** in the final profile. 
-                Significant RT deviation (>{rt_tolerance} min) suggests these analytes are distinct isomeric forms 
-                or different chemical species rather than direct solvent contamination.
-                """)
             else:
                 st.success("No significant RT shifts detected.")
 
         st.markdown("---")
         st.info("### 📝 Summary")
-        purity_status = "High" if purity > 85 else "Moderate" if purity > 60 else "Low"
+        purity_status = "High" if purity > 85 else "Moderate"
         st.markdown(f"**Data Integrity Status: {purity_status}**")
-        class_counts = df_final['Chemical_Status'].value_counts().reset_index()
-        class_counts.columns = ['Chemical Class', 'Peak Count']
-        st.table(class_counts)
+        st.table(df_final['Chemical_Status'].value_counts().reset_index())
 
-        # --- NEW: FILENAME EXTRACTOR LOGIC ---
-        # Kita cari perkataan 'Sample Name' dalam metadata h_s
-        try:
-            sample_name_row = h_s[h_s.iloc[:, 0].astype(str).str.contains('Sample Name', na=False, case=False)]
-            if not sample_name_row.empty:
-                # Ambil value kat sebelah dia (Column Index 1 atau 2 bergantung pada NIST format)
-                extracted_name = str(sample_name_row.iloc[0, 1]).strip()
-                # Kalau nama tu kosong atau NaN, guna default
-                if not extracted_name or extracted_name == 'nan':
-                    extracted_name = "LipidExpert_Report"
-            else:
-                extracted_name = "LipidExpert_Report"
-        except:
-            extracted_name = "LipidExpert_Report"
-
-        # Kemaskan nama (buang simbol pelik kalau ada)
-        clean_filename = "".join([c for c in extracted_name if c.isalnum() or c in (' ', '-', '_')]).strip()
+        # --- NEW & IMPROVED FILENAME LOGIC ---
+        extracted_name = "LipidExpert_Report" # Default
+        
+        # Scan seluruh table h_s (metadata) untuk cari "Sample Name"
+        for row_idx in range(len(h_s)):
+            for col_idx in range(len(h_s.columns)):
+                cell_val = str(h_s.iloc[row_idx, col_idx])
+                if "Sample Name" in cell_val:
+                    # Ambil cell kat sebelah dia (col_idx + 1)
+                    if col_idx + 1 < len(h_s.columns):
+                        val = str(h_s.iloc[row_idx, col_idx + 1]).strip()
+                        if val and val != "nan":
+                            extracted_name = val
+                    break
+        
+        clean_filename = "".join([c for c in extracted_name if c.isalnum() or c in (' ', '-', '_')]).strip().replace(" ", "_")
         final_filename = f"{clean_filename}.xlsx"
 
         # --- EXCEL EXPORT ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             wb = writer.book
+            # (Formats logic remains same)
             header_fmt = wb.add_format({'bold': True, 'font_size': 16, 'bg_color': '#2E75B6', 'font_color': 'white', 'border': 1, 'align': 'center'})
             label_fmt = wb.add_format({'bold': True, 'bg_color': '#D9E1F2', 'border': 1})
             val_fmt = wb.add_format({'border': 1, 'align': 'center'})
@@ -175,7 +141,7 @@ if sample_file and blank_file:
 
             ws_dash = wb.add_worksheet('Dashboard')
             ws_dash.merge_range('B2:E2', 'LIPIDEXPERT ANALYTICAL SUMMARY', header_fmt)
-            metrics_list = [('Quality Threshold', q_threshold), ('RT Tolerance', rt_tolerance), ('Area Threshold', area_threshold), ('Final Biomarkers', final_count), ('Purity Score', f"{purity:.2f}%")]
+            metrics_list = [('Sample Name Extracted', extracted_name), ('Final Biomarkers', final_count), ('Purity Score', f"{purity:.2f}%")]
             for i, (l, v) in enumerate(metrics_list, start=4):
                 ws_dash.write(f'B{i}', l, label_fmt); ws_dash.write(f'C{i}', v, val_fmt)
             
@@ -188,11 +154,9 @@ if sample_file and blank_file:
             rs = 'Analytical_Report'
             h_b.to_excel(writer, sheet_name=rs, startrow=2, index=False, header=False)
             df_b.to_excel(writer, sheet_name=rs, startrow=11, index=False, header=False)
-            
             s2 = len(df_b) + 16
             h_s.to_excel(writer, sheet_name=rs, startrow=s2+1, index=False, header=False)
             df_s.to_excel(writer, sheet_name=rs, startrow=s2+10, index=False, header=False)
-            
             s3 = s2 + len(df_s) + 15
             fh = h_s.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (CORRECTED UNIQUE)"
             fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
@@ -205,7 +169,6 @@ if sample_file and blank_file:
 
             for start, limit in [(11, len(df_b)), (s2+10, len(df_s)), (s3+10, len(df_final))]:
                 ws_rep.conditional_format(start, status_col_idx, start + limit, status_col_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': pink_fmt})
-
             ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), len(df_s.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + blank_col_idx)}{s2+11}="YES"', 'format': yellow_fmt})
             ws_rep.conditional_format(s2+10, rt_col_idx, s2+10+len(df_s), rt_col_idx, {'type': 'formula', 'criteria': f'=${chr(65 + blank_col_idx)}{s2+11}="RT_SHIFT_DETECTED"', 'format': navy_fmt})
 
@@ -215,7 +178,6 @@ if sample_file and blank_file:
             for col, (n, a) in enumerate(zip(pca_compounds, pca_areas), start=1):
                 ws_pca.write(0, col, n); ws_pca.write(1, col, a)
 
-        # SEKSIYON DOWNLOAD DENGAN NAMA AUTO
         st.download_button(
             label=f"📥 Download Report: {final_filename}", 
             data=output.getvalue(), 
