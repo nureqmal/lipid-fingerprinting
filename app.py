@@ -8,18 +8,24 @@ st.title("🧪 LipidExpert: Strict Authentication Suite")
 st.markdown("""
 ---
 ### System Overview: Strict Exclusion Mode (RT-Shift Aware)
-This suite is configured for **Halal Authentication** standards. To eliminate the risk of false biomarkers, any compound detected in the Solvent Blank will be **entirely excluded** from the sample profile.
+This suite is specialized for **Halal Authentication** and high-integrity lipidomics. To eliminate the risk of false biomarkers, any compound detected in the Solvent Blank is **entirely excluded** from the sample profile.
 
-### Operational Procedure:
-1.  **Metadata Acquisition**: Preservation of original NIST headers (Rows 1–9) for all validation tables.
-2.  **RT Tolerance**: Accounts for minor shifts (±0.05 min) when matching blank and sample compounds.
-3.  **Expert Classification**: Artifacts and petroleum-based contaminants are discarded.
-4.  **Strict Blank Exclusion**: Compounds in Solvent Blank are completely removed from the final profile.
+### Standard Operating Procedure (SOP):
+1.  **Metadata Preservation**: The system captures and retains the original NIST header (Rows 1–9) for all analytical tables to ensure full sample traceability.
+2.  **Quality Thresholding**: Data is filtered through a NIST Match Factor (Quality) threshold of **≥ 80**.
+3.  **Expert Chemical Classification**:
+    *   **Artifacts**: Known instrument/column bleeding (e.g., siloxanes, phthalates) are automatically discarded.
+    *   **Contaminants**: Potential external pollutants (e.g., halogens, petroleum sulfur) are flagged for manual review.
+4.  **Peak Deduplication**: For recurring hits, the system selects the peak with the **Maximum Area** for each unique chemical entity.
+5.  **RT-Aware Blank Exclusion**: 
+    *   The system matches compounds between Sample and Blank using **Name + RT Tolerance (±0.05 min)**.
+    *   Matched compounds are marked as "Non-Unique" and are **purged** from the final fingerprint.
+6.  **Visual Validation**: Generates a triple-table report with automated highlighting for cross-verification.
 ---
 """)
 
 def run_strict_procedure(file):
-    # 1. READ FULL DATA (Including Row 0)
+    # 1. READ FULL DATA (Including Row 0 for Metadata)
     df_full_raw = pd.read_excel(file, sheet_name='LibRes', header=None)
     df_header = df_full_raw.iloc[0:9, :].copy()
     
@@ -52,7 +58,7 @@ def run_strict_procedure(file):
     
     return df_header, df_clean
 
-# --- UPLOAD FILES ---
+# --- FILE UPLOADS ---
 col1, col2 = st.columns(2)
 with col1:
     sample_file = st.file_uploader("Upload SAMPLE File", type=['xlsx'])
@@ -61,52 +67,47 @@ with col2:
 
 if sample_file and blank_file:
     try:
+        # Process Sample and Blank
         sample_header, df_sample = run_strict_procedure(sample_file)
         blank_header, df_blank = run_strict_procedure(blank_file)
 
         # --- SMART BLANK MATCHING (NAME + RT TOLERANCE) ---
-        # RT Tolerance: ±0.05 minutes
         rt_tolerance = 0.05
         
-        def is_in_blank(row, blank_df):
-            # Check for same name first
-            matches = blank_df[blank_df['Hit Name'] == row['Hit Name']]
-            if matches.empty:
-                return "NO"
-            
-            # Check if any match falls within RT tolerance
-            for _, b_row in matches.iterrows():
-                if abs(row['RT (min)'] - b_row['RT (min)']) <= rt_tolerance:
+        def check_match(row, target_df):
+            matches = target_df[target_df['Hit Name'] == row['Hit Name']]
+            if matches.empty: return "NO"
+            for _, t_row in matches.iterrows():
+                if abs(row['RT (min)'] - t_row['RT (min)']) <= rt_tolerance:
                     return "YES"
             return "NO"
 
-        # Apply matching to sample and blank
-        df_sample['In_Blank?'] = df_sample.apply(lambda r: is_in_blank(r, df_blank), axis=1)
-        
-        # Highlight in Blank too (reverse check)
-        df_blank['Found_In_Sample?'] = df_blank.apply(lambda r: is_in_blank(r, df_sample), axis=1)
+        # Mapping cross-matches
+        df_sample['Matched_In_Blank?'] = df_sample.apply(lambda r: check_match(r, df_blank), axis=1)
+        df_blank['Matched_In_Sample?'] = df_blank.apply(lambda r: check_match(r, df_sample), axis=1)
 
-        # Final Unique Profile
-        df_final = df_sample[df_sample['In_Blank?'] == "NO"].copy()
+        # Final Unique Profile (Only 'NO' entries)
+        df_final = df_sample[df_sample['Matched_In_Blank?'] == "NO"].copy()
         
+        # Metadata Update for Final Table
         final_header = sample_header.copy()
-        final_header.iloc[0,0] = f"{final_header.iloc[0,0]} (STRICT EXCLUSION: RT-AWARE)"
+        final_header.iloc[0,0] = f"{final_header.iloc[0,0]} (STRICT EXCLUSION: UNIQUE ONLY)"
 
         # --- UI DISPLAY ---
-        st.success("Strict Authentication Analysis Complete.")
-        t1, t2, t3 = st.tabs(["1. Cleaned Blank Data", "2. Sample Mapping", "3. Final Unique Fingerprint"])
+        st.success("Analytical Process Complete.")
+        t1, t2, t3 = st.tabs(["1. Cleaned Blank Data", "2. Sample Mapping (Exclusion Tracker)", "3. Final Unique Fingerprint"])
         
         with t1: 
             st.info("Yellow rows indicate blank compounds that match sample peaks.")
-            st.dataframe(df_blank.style.apply(lambda x: ['background: #FFEB9C' if x['Found_In_Sample?'] == 'YES' else '' for _ in x], axis=1))
+            st.dataframe(df_blank.style.apply(lambda x: ['background: #FFEB9C' if x['Matched_In_Sample?'] == 'YES' else '' for _ in x], axis=1))
         with t2: 
-            st.info("Yellow rows indicate sample peaks matched in the blank (to be excluded).")
-            st.dataframe(df_sample.style.apply(lambda x: ['background: #FFEB9C' if x['In_Blank?'] == 'YES' else '' for _ in x], axis=1))
+            st.info("Yellow rows indicate sample peaks matched in the blank (purged from final profile).")
+            st.dataframe(df_sample.style.apply(lambda x: ['background: #FFEB9C' if x['Matched_In_Blank?'] == 'YES' else '' for _ in x], axis=1))
         with t3: 
-            st.write(f"Final Profile: {len(df_final)} Unique Compounds")
-            st.dataframe(df_final.drop(columns=['In_Blank?']))
+            st.write(f"Final Profile: {len(df_final)} Unique Compounds Remaining")
+            st.dataframe(df_final.drop(columns=['Matched_In_Blank?']))
 
-        # --- EXCEL EXPORT ---
+        # --- EXCEL EXPORT (TRIPLE VALIDATION) ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             sheet = 'Analytical_Report'
@@ -120,10 +121,10 @@ if sample_file and blank_file:
             sample_header.to_excel(writer, sheet_name=sheet, startrow=s2_start + 1, index=False, header=False)
             df_sample.to_excel(writer, sheet_name=sheet, startrow=s2_start + 10, index=False, header=False)
             
-            # Table 3: Final
+            # Table 3: Final Unique Profile
             s3_start = s2_start + len(df_sample) + 15
             final_header.to_excel(writer, sheet_name=sheet, startrow=s3_start + 1, index=False, header=False)
-            df_final.drop(columns=['In_Blank?']).to_excel(writer, sheet_name=sheet, startrow=s3_start + 10, index=False, header=False)
+            df_final.drop(columns=['Matched_In_Blank?']).to_excel(writer, sheet_name=sheet, startrow=s3_start + 10, index=False, header=False)
 
             # Excel Styling
             wb, ws = writer.book, writer.sheets[sheet]
@@ -132,18 +133,18 @@ if sample_file and blank_file:
             yellow_fmt = wb.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500'})
 
             ws.write(0, 0, "TABLE 1: CLEANED SOLVENT BLANK DATA", title_fmt)
-            ws.write(s2_start, 0, "TABLE 2: RAW SAMPLE (EXCLUSION MAPPING)", title_fmt)
+            ws.write(s2_start, 0, "TABLE 2: RAW SAMPLE DATA (EXCLUSION MAPPING)", title_fmt)
             ws.write(s3_start, 0, "TABLE 3: UNIQUE LIPID FINGERPRINT (FINAL)", title_fmt)
 
-            # Formatting logic for whole rows
-            # Table 1 (Blank)
+            # Row Highlighting (Formula Based)
+            # Table 1
             ws.conditional_format(10, 0, 10 + len(df_blank), 25, 
                                   {'type': 'formula', 'criteria': f'=${chr(65 + len(df_blank.columns)-1)}11="YES"', 'format': yellow_fmt})
-            # Table 2 (Sample)
+            # Table 2
             ws.conditional_format(s2_start + 10, 0, s2_start + 10 + len(df_sample), 25, 
                                   {'type': 'formula', 'criteria': f'=${chr(65 + len(df_sample.columns)-1)}{s2_start+11}="YES"', 'format': yellow_fmt})
             
-            # Highlight 'Review' status
+            # Chemical Review (Red)
             ws.conditional_format(0, 0, 5000, 30, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': red_fmt})
 
         st.download_button("📥 Download Analytical Report", output.getvalue(), "LipidExpert_Analytical_Report.xlsx")
