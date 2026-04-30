@@ -68,8 +68,9 @@ with col2:
 
 if sample_file and blank_file:
     try:
+        # FIXED: Removed keyword arguments to avoid TypeError
         h_s, df_s = run_strict_procedure(sample_file, q_threshold, area_threshold)
-        h_b, df_b = run_strict_procedure(blank_f=blank_file, q_min=q_threshold, area_min=area_threshold) # Fix call
+        h_b, df_b = run_strict_procedure(blank_file, q_threshold, area_threshold)
 
         def check_match(row, target_df, tol):
             matches = target_df[target_df['Hit Name'] == row['Hit Name']]
@@ -94,10 +95,9 @@ if sample_file and blank_file:
         m3.metric("Final Unique Compounds", f"{final_count}")
         m4.metric("Sample Purity Score", f"{purity:.1f}%")
 
-        # --- NEW: LIVE INTERPRETATION BOX ---
+        # --- LIVE INTERPRETATION BOX ---
         st.info("### 🧠 LipidExpert Interpretation")
         
-        # Logic for auto-summary
         purity_status = "High" if purity > 85 else "Moderate" if purity > 60 else "Low"
         noise_note = f"Noise filtering at {area_threshold}% has refined the biomarker list." if area_threshold > 0 else "Baseline noise filtering is currently disabled."
         
@@ -110,7 +110,7 @@ if sample_file and blank_file:
         """
         st.markdown(summary_text)
 
-        # Class Distribution
+        # Class Distribution Table
         st.write("### 🧬 Final Biomarker Class Distribution")
         class_counts = df_final['Chemical_Status'].value_counts().reset_index()
         class_counts.columns = ['Chemical Class', 'Peak Count']
@@ -120,11 +120,12 @@ if sample_file and blank_file:
 
         # --- TABS DISPLAY ---
         t1, t2, t3 = st.tabs(["1. Solvent Blank Data", "2. Sample Mapping", "3. Final Unique Fingerprint"])
-        with t1: st.dataframe(df_b.style.apply(lambda x: ['background: #FFEB9C' if x['In_Sample'] == 'YES' else '' for _ in x], axis=1))
-        with t2: st.dataframe(df_s.style.apply(lambda x: ['background: #FFEB9C' if x['In_Blank'] == 'YES' else '' for _ in x], axis=1))
+        # Fix highlight styling to check YES
+        with t1: st.dataframe(df_blank.style.apply(lambda x: ['background: #FFEB9C' if x['In_Sample'] == 'YES' else '' for _ in x], axis=1))
+        with t2: st.dataframe(df_sample.style.apply(lambda x: ['background: #FFEB9C' if x['In_Blank'] == 'YES' else '' for _ in x], axis=1))
         with t3: st.dataframe(df_final.drop(columns=['In_Blank']))
 
-        # (Excel Export Logic remains identical to previous stable version)
+        # --- EXCEL EXPORT ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             ws_dash = writer.book.add_worksheet('Dashboard')
@@ -133,9 +134,9 @@ if sample_file and blank_file:
             ws_dash.merge_range('B2:E2', 'LIPIDEXPERT ANALYTICAL SUMMARY', header_fmt)
             metrics = [('Quality Threshold Used', q_threshold), ('RT Tolerance (min)', rt_tolerance), ('Area Threshold (%)', area_threshold), ('Final Unique Biomarkers', final_count), ('Sample Purity Score', f"{purity:.2f}%")]
             for i, (l, v) in enumerate(metrics, start=4):
-                ws_dash.write(f'B{i}', l, wb.add_format({'border': 1})); ws_dash.write(f'C{i}', v, wb.add_format({'border': 1, 'align': 'center'}))
+                ws_dash.write(f'B{i}', l, wb.add_format({'border': 1}))
+                ws_dash.write(f'C{i}', v, wb.add_format({'border': 1, 'align': 'center'}))
             
-            # Analytical Report Sheets
             rs = 'Analytical_Report'
             h_b.to_excel(writer, sheet_name=rs, startrow=1, index=False, header=False)
             df_b.to_excel(writer, sheet_name=rs, startrow=10, index=False, header=False)
@@ -147,6 +148,11 @@ if sample_file and blank_file:
             fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
             df_final.drop(columns=['In_Blank']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
 
+            ws_rep = writer.sheets[rs]
+            yellow = wb.add_format({'bg_color': '#FFEB9C'})
+            ws_rep.conditional_format(10, 0, 10 + len(df_b), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_b.columns)-1)}11="YES"', 'format': yellow})
+            ws_rep.conditional_format(s2+10, 0, s2+10 + len(df_s), 25, {'type': 'formula', 'criteria': f'=${chr(65 + len(df_s.columns)-1)}{s2+11}="YES"', 'format': yellow})
+
         st.download_button("📥 Download Final Report", output.getvalue(), "LipidExpert_Final_Report.xlsx")
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error during processing: {e}")
