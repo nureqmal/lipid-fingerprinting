@@ -98,7 +98,7 @@ with main_tab1:
             m3.metric("Final Biomarkers", final_count)
             m4.metric("Sample Purity Score", f"{purity:.1f}%")
 
-            t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. 🧠 Expert RT Analysis"])
+            t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. RT Analysis"])
             
             with t1:
                 def highlight_blank(row):
