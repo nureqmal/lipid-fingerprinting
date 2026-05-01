@@ -205,5 +205,5 @@ if sample_file and blank_file:
             f_status_idx = df_final.columns.get_loc('Chemical_Status')
             ws_rep.conditional_format(s3+10, f_status_idx, s3+10+len(df_final), f_status_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': pink_fmt})
 
-        st.download_button(label=f"📥 Download Report", data=output.getvalue(), file_name=final_save_name)
+        st.download_button(label=f"Download Report", data=output.getvalue(), file_name=final_save_name)
     except Exception as e: st.error(f"Error: {e}")
