@@ -169,7 +169,7 @@ if sample_file and blank_file:
             pink_fmt = wb.add_format({'bg_color': '#FFC0CB', 'border': 1})
 
             ws_dash = wb.add_worksheet('Dashboard')
-            ws_dash.merge_range('B2:E2', 'LIPIDEXPERT ANALYTICAL SUMMARY', header_fmt)
+            ws_dash.merge_range('B2:E2', 'LIPID EQ ANALYTICAL SUMMARY', header_fmt)
             metrics_list = [('Quality Threshold', q_threshold), ('RT Tolerance', rt_tolerance), ('Area Threshold', area_threshold), ('Final Biomarkers', final_count), ('Purity Score', f"{purity:.2f}%")]
             for i, (l, v) in enumerate(metrics_list, start=4):
                 ws_dash.write(f'B{i}', l, label_fmt); ws_dash.write(f'C{i}', v, val_fmt)
