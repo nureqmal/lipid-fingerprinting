@@ -189,7 +189,7 @@ if sample_file and blank_file:
             df_s.to_excel(writer, sheet_name=rs, startrow=s2+10, index=False, header=False)
             
             s3 = s2 + len(df_s) + 15
-            fh = h_s.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (CORRECTED UNIQUE)"
+            fh = h_s.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (Clean Version ✅)"
             fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
             df_final.drop(columns=['In_Blank', 'RT_Diff']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
 
