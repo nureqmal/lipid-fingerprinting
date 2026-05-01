@@ -134,7 +134,7 @@ if sample_file and blank_file:
                 st.markdown(f"""
                 **Expert Reasoning:** 
                 These compounds (e.g., *{rt_issues['Hit Name'].iloc[0]}*) are **RETAINED** in the final profile. 
-                Significant RT deviation (>{rt_tolerance} min) suggests ini adalah isomer berbeza.
+                Significant RT deviation (>{rt_tolerance} min) suggests this is a different isomer.
                 """)
             else:
                 st.success("No significant RT shifts detected.")
