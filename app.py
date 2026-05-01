@@ -4,7 +4,7 @@ import io
 
 # Setup Page Configuration
 st.set_page_config(page_title="LipidExpert: Analytical Suite", layout="wide")
-st.title("🧪 LipidExpert: Analytical Suite")
+st.title("Lipid Integrity: Advanced Fingerprinting Suite")
 
 # --- SIDEBAR CONTROL ---
 st.sidebar.header("⚙️ Analytical Controls")
