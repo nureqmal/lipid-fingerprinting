@@ -24,8 +24,6 @@ if 'master_list' not in st.session_state:
 
 # --- SIDEBAR CONTROL ---
 
-mode = st.radio("🧭 Select Analysis Mode", ["Single Analysis", "Batch Analysis"])
-
 st.sidebar.header("⚙️ Analytical Controls")
 
 q_threshold = st.sidebar.slider("Select NIST Quality Threshold", 50, 95, 80, 5)
@@ -128,19 +126,20 @@ st.warning("⚠️ **IMPORTANT**: Please ensure your files are in **.xlsx** form
 
 
 
-if mode == "Single Analysis":
-    col1, col2 = st.columns(2)
-    with col1: 
-        sample_file = st.file_uploader("Upload SAMPLE File (.xlsx only)", type=['xlsx'])
-    with col2: 
-        blank_file = st.file_uploader("Upload BLANK File (.xlsx only)", type=['xlsx'])
+col1, col2 = st.columns(2)
 
-elif mode == "Batch Analysis":
-    sample_files = st.file_uploader("📦 Upload MULTIPLE SAMPLE Files (.xlsx)", type=['xlsx'], accept_multiple_files=True)
-    blank_file = st.file_uploader("Upload SINGLE BLANK File (.xlsx only)", type=['xlsx'])
+with col1: 
+
+    sample_file = st.file_uploader("Upload SAMPLE File (.xlsx only)", type=['xlsx'])
+
+with col2: 
+
+    blank_file = st.file_uploader("Upload BLANK File (.xlsx only)", type=['xlsx'])
 
 
-if mode == "Single Analysis" and sample_file and blank_file:
+
+if sample_file and blank_file:
+
     try:
 
         h_s, df_s = run_strict_procedure(sample_file, q_threshold, area_threshold)
@@ -429,151 +428,144 @@ if mode == "Single Analysis" and sample_file and blank_file:
 
             ws_rep = writer.sheets[rs]
 
-# === COLUMN INDEX ===
-rt_col_idx = df_s.columns.get_loc('RT (min)')
-blank_col_idx = df_s.columns.get_loc('In_Blank')
-hit_col_idx = df_s.columns.get_loc('Hit Name')
-chem_col_idx = df_s.columns.get_loc('Chemical_Status')
+# --- EXCEL EXPORT (INDIVIDUAL) ---
 
-start_row_sample = s2 + 10
-end_row_sample = start_row_sample + len(df_s)
+custom_filename = st.text_input("📁 Enter Filename for Individual Export", value="LipidExpert_Report")
+final_save_name = f"{custom_filename.strip().replace(' ', '_')}.xlsx"
 
-start_row_blank = 11
-end_row_blank = start_row_blank + len(df_b)
+output = io.BytesIO()
 
-# =========================
-# 🟡 YELLOW → MATCHED IN BLANK (SAMPLE)
-# =========================
-ws_rep.conditional_format(
-    start_row_sample, 0, end_row_sample, len(df_s.columns)-1,
-    {
-        'type': 'formula',
-        'criteria': f'=${chr(65 + blank_col_idx)}{start_row_sample+1}="YES"',
-        'format': yellow_fmt
-    }
+with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+
+    wb = writer.book
+
+    header_fmt = wb.add_format({'bold': True, 'font_size': 16, 'bg_color': '#2E75B6', 'font_color': 'white', 'border': 1, 'align': 'center'})
+    label_fmt = wb.add_format({'bold': True, 'bg_color': '#D9E1F2', 'border': 1})
+    val_fmt = wb.add_format({'border': 1, 'align': 'center'})
+    yellow_fmt = wb.add_format({'bg_color': '#FFEB9C', 'border': 1})
+    navy_fmt = wb.add_format({'bg_color': '#002060', 'font_color': 'white', 'border': 1})
+    pink_fmt = wb.add_format({'bg_color': '#FFC0CB', 'border': 1})
+
+    # =========================
+    # DASHBOARD
+    # =========================
+    ws_dash = wb.add_worksheet('Dashboard')
+    ws_dash.merge_range('B2:E2', 'LIPIDEXPERT ANALYTICAL SUMMARY', header_fmt)
+
+    metrics_list = [
+        ('Quality Threshold', q_threshold),
+        ('RT Tolerance', rt_tolerance),
+        ('Area Threshold', area_threshold),
+        ('Final Biomarkers', final_count),
+        ('Purity Score', f"{purity:.2f}%")
+    ]
+
+    for i, (l, v) in enumerate(metrics_list, start=4):
+        ws_dash.write(f'B{i}', l, label_fmt)
+        ws_dash.write(f'C{i}', v, val_fmt)
+
+    ws_dash.write('B10', 'COLOR LEGEND / GUIDELINE:', wb.add_format({'bold': True, 'underline': True}))
+    ws_dash.write('B11', 'Yellow Row', yellow_fmt); ws_dash.write('C11', 'Matched in Blank (Purged)')
+    ws_dash.write('B12', 'Navy Blue RT Cell', navy_fmt); ws_dash.write('C12', 'RT Shift Detected (Retained)')
+    ws_dash.write('B13', 'Pink Cell', pink_fmt); ws_dash.write('C13', 'Potential Contaminant')
+
+    # =========================
+    # MAIN REPORT
+    # =========================
+    rs = 'Analytical_Report'
+
+    h_b.to_excel(writer, sheet_name=rs, startrow=2, index=False, header=False)
+    df_b.to_excel(writer, sheet_name=rs, startrow=11, index=False)
+
+    s2 = len(df_b) + 16
+
+    h_s.to_excel(writer, sheet_name=rs, startrow=s2+1, index=False, header=False)
+    df_s.to_excel(writer, sheet_name=rs, startrow=s2+10, index=False)
+
+    s3 = s2 + len(df_s) + 15
+
+    fh = h_s.copy()
+    fh.iloc[0,0] = f"{fh.iloc[0,0]} (CORRECTED UNIQUE)"
+    fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
+
+    df_final.drop(columns=['In_Blank', 'RT_Diff']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False)
+
+    ws_rep = writer.sheets[rs]
+
+    # =========================
+    # COLUMN INDEX
+    # =========================
+    rt_col_idx = df_s.columns.get_loc('RT (min)')
+    blank_col_idx = df_s.columns.get_loc('In_Blank')
+    hit_col_idx = df_s.columns.get_loc('Hit Name')
+    chem_col_idx = df_s.columns.get_loc('Chemical_Status')
+
+    start_row_sample = s2 + 10
+    end_row_sample = start_row_sample + len(df_s)
+
+    start_row_blank = 11
+    end_row_blank = start_row_blank + len(df_b)
+
+    # =========================
+    # 🟡 SAMPLE YELLOW
+    # =========================
+    ws_rep.conditional_format(
+        start_row_sample, 0, end_row_sample, len(df_s.columns)-1,
+        {
+            'type': 'formula',
+            'criteria': f'=${chr(65 + blank_col_idx)}{start_row_sample+1}="YES"',
+            'format': yellow_fmt
+        }
+    )
+
+    # =========================
+    # 🔵 SAMPLE RT SHIFT
+    # =========================
+    ws_rep.conditional_format(
+        start_row_sample, rt_col_idx, end_row_sample, rt_col_idx,
+        {
+            'type': 'formula',
+            'criteria': f'=${chr(65 + blank_col_idx)}{start_row_sample+1}="RT_SHIFT_DETECTED"',
+            'format': navy_fmt
+        }
+    )
+
+    # =========================
+    # 🌸 SAMPLE CONTAMINANT
+    # =========================
+    ws_rep.conditional_format(
+        start_row_sample, hit_col_idx, end_row_sample, hit_col_idx,
+        {
+            'type': 'formula',
+            'criteria': f'=${chr(65 + chem_col_idx)}{start_row_sample+1}="Review (Potential Contaminant)"',
+            'format': pink_fmt
+        }
+    )
+
+    # =========================
+    # 🔥 BLANK SIDE COLORING (MANUAL LOOP)
+    # =========================
+    for i, row in df_b.iterrows():
+
+        excel_row = start_row_blank + i
+        hit_name = row['Hit Name']
+
+        match = df_s[df_s['Hit Name'] == hit_name]
+
+        if not match.empty:
+            status = match.iloc[0]['In_Blank']
+
+            # 🟡 Yellow row
+            if status == "YES":
+                ws_rep.set_row(excel_row, None, yellow_fmt)
+
+            # 🔵 Navy RT cell
+            elif status == "RT_SHIFT_DETECTED":
+                ws_rep.write(excel_row, rt_col_idx, row['RT (min)'], navy_fmt)
+
+# DOWNLOAD BUTTON (OUTSIDE writer!)
+st.download_button(
+    label="📥 Download Report",
+    data=output.getvalue(),
+    file_name=final_save_name
 )
-
-# =========================
-# 🔵 NAVY → RT SHIFT (SAMPLE RT CELL)
-# =========================
-ws_rep.conditional_format(
-    start_row_sample, rt_col_idx, end_row_sample, rt_col_idx,
-    {
-        'type': 'formula',
-        'criteria': f'=${chr(65 + blank_col_idx)}{start_row_sample+1}="RT_SHIFT_DETECTED"',
-        'format': navy_fmt
-    }
-)
-
-# =========================
-# 🌸 PINK → CONTAMINANT (HIT NAME CELL)
-# =========================
-ws_rep.conditional_format(
-    start_row_sample, hit_col_idx, end_row_sample, hit_col_idx,
-    {
-        'type': 'formula',
-        'criteria': f'=${chr(65 + chem_col_idx)}{start_row_sample+1}="Review (Potential Contaminant)"',
-        'format': pink_fmt
-    }
-)
-
-# =========================
-# 🔥 EXTRA: HIGHLIGHT BLANK MATCHES (NEW)
-# =========================
-
-# loop manually sebab cross-table matching tak boleh guna simple formula
-for i, row in df_b.iterrows():
-    excel_row = start_row_blank + i
-
-    hit_name = row['Hit Name']
-
-    # check kalau wujud dalam sample
-    match = df_s[df_s['Hit Name'] == hit_name]
-
-    if not match.empty:
-        status = match.iloc[0]['In_Blank']
-
-        # 🟡 Yellow for matched
-        if status == "YES":
-            ws_rep.set_row(excel_row, None, yellow_fmt)
-
-        # 🔵 Navy for RT shift (highlight RT cell)
-        elif status == "RT_SHIFT_DETECTED":
-            ws_rep.write(excel_row, rt_col_idx, row['RT (min)'], navy_fmt)
-
-
-        st.download_button(label=f"📥 Download Report", data=output.getvalue(), file_name=final_save_name)
-
-    except Exception as e: st.error(f"Error: {e}")
-
-# =========================
-# 🔥 BATCH MODE (ADD-ON SAHAJA)
-# =========================
-if mode == "Batch Analysis" and sample_files and blank_file:
-
-    st.subheader("📦 Batch Processing Mode")
-
-    try:
-        # Process blank sekali sahaja
-        h_b, df_b = run_strict_procedure(blank_file, q_threshold, area_threshold)
-
-        master_list_auto = []
-        summary_list = []
-
-        for file in sample_files:
-            sample_name = file.name.replace(".xlsx", "")
-
-            h_s, df_s = run_strict_procedure(file, q_threshold, area_threshold)
-
-            # reuse EXACT logic
-            def check_match_expert(row, target_df, tol):
-                matches = target_df[target_df['Hit Name'] == row['Hit Name']]
-                if matches.empty:
-                    return "NO", None
-                for _, t_row in matches.iterrows():
-                    diff = abs(row['RT (min)'] - t_row['RT (min)'])
-                    if diff <= tol:
-                        return "YES", diff 
-                closest_diff = matches.apply(lambda r: abs(row['RT (min)'] - r['RT (min)']), axis=1).min()
-                return "RT_SHIFT_DETECTED", closest_diff
-
-            res = df_s.apply(lambda r: check_match_expert(r, df_b, rt_tolerance), axis=1)
-            df_s['In_Blank'] = [x[0] for x in res]
-            df_s['RT_Diff'] = [x[1] for x in res]
-
-            df_final = df_s[df_s['In_Blank'].isin(["NO", "RT_SHIFT_DETECTED"])].copy()
-
-            total_sample = len(df_s)
-            final_count = len(df_final)
-            purity = (final_count / total_sample * 100) if total_sample > 0 else 0
-
-            summary_list.append({
-                "Sample": sample_name,
-                "Total Peaks": total_sample,
-                "Final Compounds": final_count,
-                "Purity (%)": round(purity, 2)
-            })
-
-            entry = df_final[['Hit Name', 'Area (%)']].copy()
-            entry['Sample_ID'] = sample_name
-            master_list_auto.append(entry)
-
-        # ===== OUTPUT =====
-        st.write("### 📊 Batch Summary")
-        st.dataframe(pd.DataFrame(summary_list))
-
-        combined_df = pd.concat(master_list_auto)
-        master_pivot = combined_df.pivot(index='Sample_ID', columns='Hit Name', values='Area (%)').fillna(0)
-
-        st.write("### 🧠 PCA-Ready Master Table (Auto)")
-        st.dataframe(master_pivot)
-
-        # download
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            master_pivot.to_excel(writer, sheet_name='PCA_Ready')
-
-        st.download_button("📥 Download Batch PCA Dataset", output.getvalue(), "Batch_PCA.xlsx")
-
-    except Exception as e:
-        st.error(f"Batch Error: {e}")
