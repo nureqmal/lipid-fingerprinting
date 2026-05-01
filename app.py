@@ -6,19 +6,11 @@ import io
 st.set_page_config(page_title="LipidExpert: Analytical Suite", layout="wide")
 st.title("🧪 LipidExpert: Analytical Suite")
 
-# --- SESSION STATE (Untuk Master Table) ---
-if 'master_list' not in st.session_state:
-    st.session_state.master_list = []
-
 # --- SIDEBAR CONTROL ---
 st.sidebar.header("⚙️ Analytical Controls")
 q_threshold = st.sidebar.slider("Select NIST Quality Threshold", 50, 95, 80, 5)
 rt_tolerance = st.sidebar.slider("Select RT Tolerance (min)", 0.01, 0.20, 0.05, 0.01)
 area_threshold = st.sidebar.slider("Min Area % (Noise Filter)", 0.00, 5.00, 0.00, 0.01)
-
-if st.sidebar.button("🗑️ Reset Master Table"):
-    st.session_state.master_list = []
-    st.sidebar.success("Master Table Cleared!")
 
 st.markdown(f"""
 ---
@@ -96,14 +88,11 @@ if sample_file and blank_file:
 
         df_final = df_s[df_s['In_Blank'].isin(["NO", "RT_SHIFT_DETECTED"])].copy()
         
-        # --- UPDATED PURITY LOGIC (AREA-WEIGHTED) ---
+        # --- PURITY LOGIC (AREA-WEIGHTED) ---
         total_sample_peaks = len(df_s)
         total_area_original = df_s['Area (Ab*s)'].sum()
-        
-        # Area daripada peak yang benar-benar bersih (Bukan Contaminant & Bukan Blank Match)
         clean_area_sum = df_final[df_final['Chemical_Status'] == "Clean (Lipid/Oxidation)"]['Area (Ab*s)'].sum()
         
-        # Purity Score = (Clean Lipid Area / Total Area) * 100
         purity = (clean_area_sum / total_area_original * 100) if total_area_original > 0 else 0
         final_count = len(df_final)
         excluded = len(df_s[df_s['In_Blank'] == "YES"])
@@ -116,7 +105,7 @@ if sample_file and blank_file:
         m4.metric("Sample Purity Score", f"{purity:.1f}%")
 
         # --- DATA ANALYSIS TABS ---
-        t1, t2, t3, t4, t5 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. 🧠 Expert RT Analysis", "🏆 5. Master PCA Table"])
+        t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. 🧠 Expert RT Analysis"])
         
         with t1: 
             def highlight_blank(row):
@@ -162,27 +151,6 @@ if sample_file and blank_file:
             else:
                 st.success("No significant RT shifts detected.")
 
-        with t5:
-            st.write("### 🏗️ Master Dataset Builder")
-            sample_id = st.text_input("🏷️ Unique Sample ID for PCA", value="OO-HARA-HEX-1")
-            
-            if st.button("➕ Add Current Fingerprint to Master"):
-                master_entry = df_final[['Hit Name', 'Area (%)']].copy()
-                master_entry['Sample_ID'] = sample_id
-                st.session_state.master_list.append(master_entry)
-                st.success(f"Added {sample_id} to Master Table!")
-
-            if st.session_state.master_list:
-                combined_df = pd.concat(st.session_state.master_list)
-                master_pivot = combined_df.pivot(index='Sample_ID', columns='Hit Name', values='Area (%)').fillna(0)
-                st.write("**Current Master Table Preview (Pivoted):**")
-                st.dataframe(master_pivot)
-                
-                master_out = io.BytesIO()
-                with pd.ExcelWriter(master_out, engine='xlsxwriter') as writer:
-                    master_pivot.to_excel(writer, sheet_name='PCA_Ready')
-                st.download_button("📥 Download Master Table for PCA", master_out.getvalue(), "Master_PCA_Dataset.xlsx")
-
         st.markdown("---")
         st.info("### 📝 Summary")
         purity_status = "High Integrity" if purity > 90 else "Moderate/Needs Review" if purity > 70 else "Low (Contaminated)"
@@ -208,7 +176,6 @@ if sample_file and blank_file:
             ws_dash = wb.add_worksheet('Dashboard')
             ws_dash.merge_range('B2:E2', 'LIPIDEXPERT ANALYTICAL SUMMARY', header_fmt)
             
-            # Purity di dashboard Excel juga guna yang baru
             metrics_list = [
                 ('Quality Threshold', q_threshold), 
                 ('RT Tolerance', rt_tolerance), 
