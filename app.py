@@ -429,28 +429,77 @@ if mode == "Single Analysis" and sample_file and blank_file:
 
             ws_rep = writer.sheets[rs]
 
-            rt_col_idx = df_s.columns.get_loc('RT (min)')
+# === COLUMN INDEX ===
+rt_col_idx = df_s.columns.get_loc('RT (min)')
+blank_col_idx = df_s.columns.get_loc('In_Blank')
+hit_col_idx = df_s.columns.get_loc('Hit Name')
+chem_col_idx = df_s.columns.get_loc('Chemical_Status')
 
-            blank_col_idx = df_s.columns.get_loc('In_Blank')
+start_row_sample = s2 + 10
+end_row_sample = start_row_sample + len(df_s)
 
+start_row_blank = 11
+end_row_blank = start_row_blank + len(df_b)
 
+# =========================
+# 🟡 YELLOW → MATCHED IN BLANK (SAMPLE)
+# =========================
+ws_rep.conditional_format(
+    start_row_sample, 0, end_row_sample, len(df_s.columns)-1,
+    {
+        'type': 'formula',
+        'criteria': f'=${chr(65 + blank_col_idx)}{start_row_sample+1}="YES"',
+        'format': yellow_fmt
+    }
+)
 
-            ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), len(df_s.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + blank_col_idx)}{s2+11}="YES"', 'format': yellow_fmt})
+# =========================
+# 🔵 NAVY → RT SHIFT (SAMPLE RT CELL)
+# =========================
+ws_rep.conditional_format(
+    start_row_sample, rt_col_idx, end_row_sample, rt_col_idx,
+    {
+        'type': 'formula',
+        'criteria': f'=${chr(65 + blank_col_idx)}{start_row_sample+1}="RT_SHIFT_DETECTED"',
+        'format': navy_fmt
+    }
+)
 
-            ws_rep.conditional_format(s2+10, rt_col_idx, s2+10+len(df_s), rt_col_idx, {'type': 'formula', 'criteria': f'=${chr(65 + blank_col_idx)}{s2+11}="RT_SHIFT_DETECTED"', 'format': navy_fmt})
+# =========================
+# 🌸 PINK → CONTAMINANT (HIT NAME CELL)
+# =========================
+ws_rep.conditional_format(
+    start_row_sample, hit_col_idx, end_row_sample, hit_col_idx,
+    {
+        'type': 'formula',
+        'criteria': f'=${chr(65 + chem_col_idx)}{start_row_sample+1}="Review (Potential Contaminant)"',
+        'format': pink_fmt
+    }
+)
 
+# =========================
+# 🔥 EXTRA: HIGHLIGHT BLANK MATCHES (NEW)
+# =========================
 
+# loop manually sebab cross-table matching tak boleh guna simple formula
+for i, row in df_b.iterrows():
+    excel_row = start_row_blank + i
 
-            ws_pca = wb.add_worksheet('PCA_Ready_Data')
+    hit_name = row['Hit Name']
 
-            pca_compounds, pca_areas = df_final['Hit Name'].tolist(), df_final['Area (Ab*s)'].tolist()
+    # check kalau wujud dalam sample
+    match = df_s[df_s['Hit Name'] == hit_name]
 
-            ws_pca.write(0, 0, 'Compound', wb.add_format({'bold': True, 'bg_color': '#E2EFDA'})); ws_pca.write(1, 0, 'Area')
+    if not match.empty:
+        status = match.iloc[0]['In_Blank']
 
-            for col, (n, a) in enumerate(zip(pca_compounds, pca_areas), start=1):
+        # 🟡 Yellow for matched
+        if status == "YES":
+            ws_rep.set_row(excel_row, None, yellow_fmt)
 
-                ws_pca.write(0, col, n); ws_pca.write(1, col, a)
-
+        # 🔵 Navy for RT shift (highlight RT cell)
+        elif status == "RT_SHIFT_DETECTED":
+            ws_rep.write(excel_row, rt_col_idx, row['RT (min)'], navy_fmt)
 
 
         st.download_button(label=f"📥 Download Report", data=output.getvalue(), file_name=final_save_name)
