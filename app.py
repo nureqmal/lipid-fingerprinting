@@ -110,17 +110,13 @@ if sample_file and blank_file:
             help="""
             **Halal Integrity Metrics (Area-Weight)**
             
-            This score represents the 'cleanliness' of your sample after removing solvent blank matches.
-            
-            **Formula:**
-            (Final Unique Compounds / Total Initial Sample Peaks) x 100
-            
-            **Integrity Logic:**
-            - High (>85%): Excellent sample purity.
-            - Moderate (60-85%): Trace contaminants or common lipids detected.
-            - Low (<60%): High noise or significant overlap with solvent/contaminants.
-            """
-        )
+         This score represents the concentration-weighted purity of the lipid profile. 
+                It filters out solvent background (blank) and non-lipid artifacts.
+                
+                **Formula:**
+                (Σ Area of Clean Lipid Peaks / Total Original Peak Area) × 100
+                """
+            )
 
         # --- DATA ANALYSIS TABS ---
         t1, t2, t3, t4, t5 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. 🧠 Expert RT Analysis", "🏆 5. Master PCA Table"])
