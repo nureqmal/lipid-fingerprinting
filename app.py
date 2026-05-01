@@ -4,7 +4,7 @@ import io
 
 # Setup Page Configuration
 st.set_page_config(page_title="LipidExpert: Analytical Suite", layout="wide")
-st.title("🧪 LipidExpert: Analytical Suite")
+st.title("🧪 Lipid EQ-Sorting & Cleaning")
 
 # --- SIDEBAR CONTROL ---
 st.sidebar.header("⚙️ Analytical Controls")
@@ -120,7 +120,7 @@ if sample_file and blank_file:
         )
 
         # --- DATA ANALYSIS TABS ---
-        t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. 🧠 Expert RT Analysis"])
+        t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. RT Analysis"])
         
         with t1: 
             def highlight_blank(row):
