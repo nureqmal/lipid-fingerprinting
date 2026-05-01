@@ -426,9 +426,7 @@ if sample_file and blank_file:
 
 
 
-            ws_rep = writer.sheets[rs]
-
-# --- EXCEL EXPORT (INDIVIDUAL) ---
+           # --- EXCEL EXPORT (INDIVIDUAL) ---
 
 custom_filename = st.text_input("📁 Enter Filename for Individual Export", value="LipidExpert_Report")
 final_save_name = f"{custom_filename.strip().replace(' ', '_')}.xlsx"
@@ -568,4 +566,5 @@ st.download_button(
     label="📥 Download Report",
     data=output.getvalue(),
     file_name=final_save_name
+)
 )
