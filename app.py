@@ -54,7 +54,7 @@ def run_strict_procedure(file, q_min, area_min):
     def classify_compound(name):
         n = str(name).lower()
         if any(x in n for x in blacklist): return "Discard (Artifact)"
-        if any(x in n for x in contaminants): return "Review"
+        if any(x in n for x in contaminants): return "Review (Potential Contaminant)"
         return "Clean (Lipid/Oxidation)"
 
     df['Chemical_Status'] = df['Hit Name'].apply(classify_compound)
