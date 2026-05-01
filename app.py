@@ -3,7 +3,7 @@ import pandas as pd
 import io
 
 # Setup Page Configuration
-st.set_page_config(page_title="LipidExpert: Analytical Suite", layout="wide")
+st.set_page_config(page_title="Lipid EQ", layout="wide")
 st.title("Lipid EQ- Sorting & Cleaning")
 
 # --- SIDEBAR CONTROL ---
