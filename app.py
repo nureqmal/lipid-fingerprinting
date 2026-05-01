@@ -98,7 +98,7 @@ if sample_file and blank_file:
         total_sample, excluded, final_count = len(df_s), len(df_s[df_s['In_Blank'] == "YES"]), len(df_final)
         purity = (final_count / total_sample * 100) if total_sample > 0 else 0
         
-        st.subheader("📊 Analysis Summary Metrics")
+        st.subheader("Summary Metrics")
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total Sample Peaks", total_sample)
         m2.metric("Blank Matches (Purged)", excluded, delta=f"-{excluded}", delta_color="inverse")
