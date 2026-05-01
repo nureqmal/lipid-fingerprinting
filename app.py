@@ -76,9 +76,13 @@ with main_tab1:
             h_s, df_s = run_strict_procedure(sample_file, q_threshold, area_threshold)
             h_b, df_b = run_strict_procedure(blank_file, q_threshold, area_threshold)
 
+            # Matching logic
             res_s = df_s.apply(lambda r: check_match_expert(r, df_b, rt_tolerance), axis=1)
             df_s['In_Blank'] = [x[0] for x in res_s]
             df_s['RT_Diff'] = [x[1] for x in res_s]
+
+            res_b = df_b.apply(lambda r: check_match_expert(r, df_s, rt_tolerance), axis=1)
+            df_b['In_Sample'] = [x[0] for x in res_b]
 
             df_final = df_s[df_s['In_Blank'].isin(["NO", "RT_SHIFT_DETECTED"])].copy()
             
@@ -94,8 +98,6 @@ with main_tab1:
             m1.metric("Total Peaks Detected", total_sample_peaks)
             m2.metric("Blank Matches (Purged)", excluded, delta=f"-{excluded}", delta_color="inverse")
             m3.metric("Final Biomarkers", final_count)
-            
-            # --- THE UPDATE: Added help parameter for the tooltip ---
             m4.metric(
                 "Sample Purity Score", 
                 f"{purity:.1f}%",
@@ -112,27 +114,34 @@ with main_tab1:
             t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. RT Analysis"])
             
             with t1:
+                # Fixed: Use get to avoid KeyError if column doesn't exist during processing
                 def highlight_blank(row):
-                    styles = ['' for _ in row.index]; n = row['Chemical_Status']; match = row['In_Sample']
+                    styles = ['' for _ in row.index]
+                    n = row.get('Chemical_Status', '')
+                    match = row.get('In_Sample', '')
                     if n == "Review (Potential Contaminant)": styles = ['background-color: #FFC0CB' for _ in row.index]
                     elif match == "YES": styles = ['background-color: #FFEB9C' for _ in row.index]
-                    elif match == "RT_SHIFT_DETECTED": styles[row.index.get_loc('RT (min)')] = 'background-color: #002060; color: white'
+                    elif match == "RT_SHIFT_DETECTED": 
+                        if 'RT (min)' in row.index: styles[row.index.get_loc('RT (min)')] = 'background-color: #002060; color: white'
                     return styles
                 st.dataframe(df_b.style.apply(highlight_blank, axis=1))
 
             with t2:
                 def highlight_sample(row):
-                    styles = ['' for _ in row.index]; n = row['Chemical_Status']; match = row['In_Blank']
+                    styles = ['' for _ in row.index]
+                    n = row.get('Chemical_Status', '')
+                    match = row.get('In_Blank', '')
                     if n == "Review (Potential Contaminant)": styles = ['background-color: #FFC0CB' for _ in row.index]
                     elif match == "YES": styles = ['background-color: #FFEB9C' for _ in row.index]
-                    elif match == "RT_SHIFT_DETECTED": styles[row.index.get_loc('RT (min)')] = 'background-color: #002060; color: white'
+                    elif match == "RT_SHIFT_DETECTED":
+                        if 'RT (min)' in row.index: styles[row.index.get_loc('RT (min)')] = 'background-color: #002060; color: white'
                     return styles
                 st.dataframe(df_s.style.apply(highlight_sample, axis=1))
 
             with t3:
                 def highlight_final(row):
-                    return ['background-color: #FFC0CB' if row['Chemical_Status'] == "Review (Potential Contaminant)" else '' for _ in row.index]
-                st.dataframe(df_final.drop(columns=['In_Blank', 'RT_Diff']).style.apply(highlight_final, axis=1))
+                    return ['background-color: #FFC0CB' if row.get('Chemical_Status') == "Review (Potential Contaminant)" else '' for _ in row.index]
+                st.dataframe(df_final.drop(columns=['In_Blank', 'RT_Diff'], errors='ignore').style.apply(highlight_final, axis=1))
 
             with t4:
                 rt_issues = df_s[df_s['In_Blank'] == "RT_SHIFT_DETECTED"]
@@ -145,10 +154,10 @@ with main_tab1:
             custom_filename = st.text_input("📁 Enter Filename", value="Analytical_Report", key="single_fn")
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df_final.to_excel(writer, sheet_name='Analytical_Report') 
-            
+                df_final.to_excel(writer, sheet_name='Analytical_Report', index=False) 
             st.download_button("📥 Download Full Analytical Report", output.getvalue(), file_name=f"{custom_filename}.xlsx")
-        except Exception as e: st.error(f"Error: {e}")
+            
+        except Exception as e: st.error(f"Error in Analysis: {e}")
 
 with main_tab2:
     st.header("🔬 Multiple Sample Analysis (PCA Master Table)")
@@ -158,35 +167,37 @@ with main_tab2:
     m_samples = st.file_uploader("2. Upload Multiple SAMPLES", type=['xlsx'], accept_multiple_files=True, key="multi_samples")
 
     if m_blank and m_samples:
-        _, df_b_multi = run_strict_procedure(m_blank, q_threshold, area_threshold)
-        
-        pca_data = []
-        for f in m_samples:
-            _, df_s_multi = run_strict_procedure(f, q_threshold, area_threshold)
-            res = df_s_multi.apply(lambda r: check_match_expert(r, df_b_multi, rt_tolerance), axis=1)
-            df_s_multi['In_Blank'] = [x[0] for x in res]
+        try:
+            _, df_b_multi = run_strict_procedure(m_blank, q_threshold, area_threshold)
             
-            df_clean = df_s_multi[df_s_multi['In_Blank'].isin(["NO", "RT_SHIFT_DETECTED"])].copy()
-            df_clean['Sample_Name'] = f.name
-            pca_data.append(df_clean)
-        
-        if pca_data:
-            master_pca = pd.concat(pca_data)
-            pivot_df = master_pca.pivot_table(
-                index='Sample_Name', 
-                columns='Hit Name', 
-                values='Area (Ab*s)'
-            ).fillna(0)
+            pca_data = []
+            for f in m_samples:
+                _, df_s_multi = run_strict_procedure(f, q_threshold, area_threshold)
+                res = df_s_multi.apply(lambda r: check_match_expert(r, df_b_multi, rt_tolerance), axis=1)
+                df_s_multi['In_Blank'] = [x[0] for x in res]
+                
+                df_clean = df_s_multi[df_s_multi['In_Blank'].isin(["NO", "RT_SHIFT_DETECTED"])].copy()
+                df_clean['Sample_Name'] = f.name
+                pca_data.append(df_clean)
             
-            st.subheader("🏁 Corrected Unique Master Table (PCA Ready)")
-            st.dataframe(pivot_df)
-            
-            pca_out = io.BytesIO()
-            with pd.ExcelWriter(pca_out, engine='xlsxwriter') as writer:
-                pivot_df.to_excel(writer, sheet_name='PCA_Data')
-            
-            st.download_button(
-                label="📥 Download PCA Master Table",
-                data=pca_out.getvalue(),
-                file_name="PCA_Master_Table_Original_Abs.xlsx"
-            )
+            if pca_data:
+                master_pca = pd.concat(pca_data)
+                pivot_df = master_pca.pivot_table(
+                    index='Sample_Name', 
+                    columns='Hit Name', 
+                    values='Area (Ab*s)'
+                ).fillna(0)
+                
+                st.subheader("🏁 Corrected Unique Master Table (PCA Ready)")
+                st.dataframe(pivot_df)
+                
+                pca_out = io.BytesIO()
+                with pd.ExcelWriter(pca_out, engine='xlsxwriter') as writer:
+                    pivot_df.to_excel(writer, sheet_name='PCA_Data')
+                
+                st.download_button(
+                    label="📥 Download PCA Master Table",
+                    data=pca_out.getvalue(),
+                    file_name="PCA_Master_Table_Original_Abs.xlsx"
+                )
+        except Exception as e: st.error(f"Error in PCA processing: {e}")
