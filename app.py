@@ -6,31 +6,23 @@ import io
 st.set_page_config(page_title="LipidExpert: Analytical Suite", layout="wide")
 st.title("🧪 LipidExpert: Analytical Suite")
 
-# --- SESSION STATE (Untuk Master Table) ---
-if 'master_list' not in st.session_state:
-    st.session_state.master_list = []
-
-# --- SIDEBAR CONTROL (UPDATED WITH TOOLTIPS) ---
+# --- SIDEBAR CONTROL ---
 st.sidebar.header("⚙️ Analytical Controls")
 
 q_threshold = st.sidebar.slider(
     "Select NIST Quality Threshold", 50, 95, 80, 5,
-    help="**NIST Match Factor:** Filters compound identity accuracy. A value >80 means the sample spectrum matches the NIST library very well. The higher the value, the fewer false positives but the higher the risk of missing real data."
+    help="**NIST Match Factor:** Filters compound identity accuracy."
 )
 
 rt_tolerance = st.sidebar.slider(
     "Select RT Tolerance (min)", 0.01, 0.20, 0.05, 0.01,
-    help="**Retention Time Buffer:** Time error limit for comparing Sample vs Blank. If the same compound appears in this range, it is considered a 'Solvent Peak' and will be discarded. The default of 0.05 is the gold standard for modern GC-MS."
+    help="**Retention Time Buffer:** Time error limit for comparing Sample vs Blank."
 )
 
 area_threshold = st.sidebar.slider(
     "Min Area % (Noise Filter)", 0.00, 5.00, 0.00, 0.01,
-    help="**Baseline Cut-off:** Removes small peaks (noise) that are not quantitatively significant. The default of 0.00 allows all data to pass through, while values ​​>0.10 are usually used to focus on the major components (Major Compounds) only."
+    help="**Baseline Cut-off:** Removes small peaks (noise)."
 )
-
-if st.sidebar.button("🗑️ Reset Master Table"):
-    st.session_state.master_list = []
-    st.sidebar.success("Master Table Cleared!")
 
 st.markdown(f"""
 ---
@@ -72,7 +64,7 @@ def run_strict_procedure(file, q_min, area_min):
     return df_header, df.sort_values(by='RT (min)')
 
 # --- FILE UPLOAD SECTION ---
-st.warning("⚠️ **IMPORTANT**: Please ensure your files are in **.xlsx** format. Older **.xls** formats are not supported.")
+st.warning("⚠️ **IMPORTANT**: Please ensure your files are in **.xlsx** format.")
 
 col1, col2 = st.columns(2)
 with col1: 
@@ -114,23 +106,10 @@ if sample_file and blank_file:
         m1.metric("Total Sample Peaks", total_sample)
         m2.metric("Blank Matches (Purged)", excluded, delta=f"-{excluded}", delta_color="inverse")
         m3.metric("Final Unique Compounds", final_count)
-        
-        m4.metric(
-            label="Sample Purity Score", 
-            value=f"{purity:.1f}%",
-            help="""
-            **Halal Integrity Metrics (Area-Weight)**
-            
-            This score represents the concentration-weighted purity of the lipid profile. 
-            It filters out solvent background (blank) and non-lipid artifacts.
-                
-            **Formula:**
-            (Σ Area of Clean Lipid Peaks / Total Original Peak Area) × 100
-            """
-            )
+        m4.metric(label="Sample Purity Score", value=f"{purity:.1f}%")
 
         # --- DATA ANALYSIS TABS ---
-        t1, t2, t3, t4, t5 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. 🧠 Expert RT Analysis", "🏆 5. Master PCA Table"])
+        t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. 🧠 Expert RT Analysis"])
         
         with t1: 
             def highlight_blank(row):
@@ -161,32 +140,10 @@ if sample_file and blank_file:
             st.write("### 🧬 RT Shift Discussion Logic")
             rt_issues = df_s[df_s['In_Blank'] == "RT_SHIFT_DETECTED"]
             if not rt_issues.empty:
-                st.info(f"Found **{len(rt_issues)}** compounds with same Hit Name but significant RT shifts (> {rt_tolerance} min).")
+                st.info(f"Found **{len(rt_issues)}** compounds with RT shifts (> {rt_tolerance} min).")
                 st.table(rt_issues[['Hit Name', 'RT (min)', 'RT_Diff']])
-                st.markdown(f"**Expert Reasoning:** These compounds are **RETAINED**. Significant RT deviation suggests different isomers.")
             else:
                 st.success("No significant RT shifts detected.")
-
-        with t5:
-            st.write("### 🏗️ Master Dataset Builder")
-            sample_id = st.text_input("🏷️ Unique Sample ID for PCA", value="OO-HARA-HEX-1")
-            
-            if st.button("➕ Add Current Fingerprint to Master"):
-                master_entry = df_final[['Hit Name', 'Area (%)']].copy()
-                master_entry['Sample_ID'] = sample_id
-                st.session_state.master_list.append(master_entry)
-                st.success(f"Added {sample_id} to Master Table!")
-
-            if st.session_state.master_list:
-                combined_df = pd.concat(st.session_state.master_list)
-                master_pivot = combined_df.pivot(index='Sample_ID', columns='Hit Name', values='Area (%)').fillna(0)
-                st.write("**Current Master Table Preview (Pivoted):**")
-                st.dataframe(master_pivot)
-                
-                master_out = io.BytesIO()
-                with pd.ExcelWriter(master_out, engine='xlsxwriter') as writer:
-                    master_pivot.to_excel(writer, sheet_name='PCA_Ready')
-                st.download_button("📥 Download Master Table for PCA", master_out.getvalue(), "Master_PCA_Dataset.xlsx")
 
         st.markdown("---")
         st.info("### 📝 Summary")
@@ -196,7 +153,7 @@ if sample_file and blank_file:
         class_counts.columns = ['Chemical Class', 'Peak Count']
         st.table(class_counts)
 
-        # Individual Export logic...
+        # Individual Export logic
         custom_filename = st.text_input("📁 Enter Filename for Individual Export", value="LipidExpert_Report")
         final_save_name = f"{custom_filename.strip().replace(' ', '_')}.xlsx"
 
@@ -216,12 +173,6 @@ if sample_file and blank_file:
             for i, (l, v) in enumerate(metrics_list, start=4):
                 ws_dash.write(f'B{i}', l, label_fmt); ws_dash.write(f'C{i}', v, val_fmt)
             
-            ws_dash.write('B10', 'COLOR LEGEND / GUIDELINE:', wb.add_format({'bold': True, 'underline': True}))
-            ws_dash.write('B11', 'Yellow Row', yellow_fmt); ws_dash.write('C11', 'Matched in Blank/Sample (Shared Compound)')
-            ws_dash.write('B12', 'Navy Blue RT Cell', navy_fmt); ws_dash.write('C12', 'RT Shift Detected (Retained)')
-            ws_dash.write('B13', 'Pink Cell', pink_fmt); ws_dash.write('C13', 'Potential Contaminant')
-            ws_dash.set_column('B:B', 30); ws_dash.set_column('C:C', 85)
-
             rs = 'Analytical_Report'
             h_b.to_excel(writer, sheet_name=rs, startrow=2, index=False, header=False)
             df_b.to_excel(writer, sheet_name=rs, startrow=11, index=False, header=False)
@@ -245,12 +196,6 @@ if sample_file and blank_file:
             s_match_idx = df_s.columns.get_loc('In_Blank')
             ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), len(df_s.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + s_match_idx)}{s2+11}="YES"', 'format': yellow_fmt})
             ws_rep.conditional_format(s2+10, s_rt_idx, s2+10+len(df_s), s_rt_idx, {'type': 'formula', 'criteria': f'=${chr(65 + s_match_idx)}{s2+11}="RT_SHIFT_DETECTED"', 'format': navy_fmt})
-
-            ws_pca = wb.add_worksheet('PCA_Ready_Data')
-            pca_compounds, pca_areas = df_final['Hit Name'].tolist(), df_final['Area (Ab*s)'].tolist()
-            ws_pca.write(0, 0, 'Compound', wb.add_format({'bold': True, 'bg_color': '#E2EFDA'})); ws_pca.write(1, 0, 'Area')
-            for col, (n, a) in enumerate(zip(pca_compounds, pca_areas), start=1):
-                ws_pca.write(0, col, n); ws_pca.write(1, col, a)
 
         st.download_button(label=f"📥 Download Report", data=output.getvalue(), file_name=final_save_name)
     except Exception as e: st.error(f"Error: {e}")
