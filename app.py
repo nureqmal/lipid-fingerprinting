@@ -73,7 +73,7 @@ if sample_file and blank_file:
         h_s, df_s = run_strict_procedure(sample_file, q_threshold, area_threshold)
         h_b, df_b = run_strict_procedure(blank_file, q_threshold, area_threshold)
 
-        # --- EXPERT RT SHIFT LOGIC (UNTOUCHED) ---
+        # --- EXPERT RT SHIFT LOGIC ---
         def check_match_expert(row, target_df, tol):
             matches = target_df[target_df['Hit Name'] == row['Hit Name']]
             if matches.empty:
@@ -96,14 +96,23 @@ if sample_file and blank_file:
 
         df_final = df_s[df_s['In_Blank'].isin(["NO", "RT_SHIFT_DETECTED"])].copy()
         
-        total_sample, excluded, final_count = len(df_s), len(df_s[df_s['In_Blank'] == "YES"]), len(df_final)
-        purity = (final_count / total_sample * 100) if total_sample > 0 else 0
+        # --- UPDATED PURITY LOGIC (AREA-WEIGHTED) ---
+        total_sample_peaks = len(df_s)
+        total_area_original = df_s['Area (Ab*s)'].sum()
         
-        st.subheader("📊 Analysis Summary Metrics")
+        # Area daripada peak yang benar-benar bersih (Bukan Contaminant & Bukan Blank Match)
+        clean_area_sum = df_final[df_final['Chemical_Status'] == "Clean (Lipid/Oxidation)"]['Area (Ab*s)'].sum()
+        
+        # Purity Score = (Clean Lipid Area / Total Area) * 100
+        purity = (clean_area_sum / total_area_original * 100) if total_area_original > 0 else 0
+        final_count = len(df_final)
+        excluded = len(df_s[df_s['In_Blank'] == "YES"])
+
+        st.subheader("📊 Halal Integrity Metrics (Area-Weighted)")
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Sample Peaks", total_sample)
+        m1.metric("Total Peaks Detected", total_sample_peaks)
         m2.metric("Blank Matches (Purged)", excluded, delta=f"-{excluded}", delta_color="inverse")
-        m3.metric("Final Unique Compounds", final_count)
+        m3.metric("Final Biomarkers", final_count)
         m4.metric("Sample Purity Score", f"{purity:.1f}%")
 
         # --- DATA ANALYSIS TABS ---
@@ -112,13 +121,10 @@ if sample_file and blank_file:
         with t1: 
             def highlight_blank(row):
                 styles = ['' for _ in row.index]
-                # Priority 1: Contaminant (Pink)
                 if row['Chemical_Status'] == "Review (Potential Contaminant)":
                     styles = ['background-color: #FFC0CB' for _ in row.index]
-                # Priority 2: In Sample (Yellow)
                 elif row['In_Sample'] == "YES":
                     styles = ['background-color: #FFEB9C' for _ in row.index]
-                # Priority 3: RT Shift (Navy)
                 elif row['In_Sample'] == "RT_SHIFT_DETECTED":
                     rt_idx = row.index.get_loc('RT (min)')
                     styles[rt_idx] = 'background-color: #002060; color: white'
@@ -128,13 +134,10 @@ if sample_file and blank_file:
         with t2: 
             def highlight_sample(row):
                 styles = ['' for _ in row.index]
-                # Priority 1: Contaminant (Pink)
                 if row['Chemical_Status'] == "Review (Potential Contaminant)":
                     styles = ['background-color: #FFC0CB' for _ in row.index]
-                # Priority 2: In Blank (Yellow)
                 elif row['In_Blank'] == "YES":
                     styles = ['background-color: #FFEB9C' for _ in row.index]
-                # Priority 3: RT Shift (Navy)
                 elif row['In_Blank'] == "RT_SHIFT_DETECTED":
                     rt_idx = row.index.get_loc('RT (min)')
                     styles[rt_idx] = 'background-color: #002060; color: white'
@@ -142,7 +145,6 @@ if sample_file and blank_file:
             st.dataframe(df_s.style.apply(highlight_sample, axis=1))
         
         with t3: 
-            # Final Fingerprint juga highlight pink untuk contaminant
             def highlight_final(row):
                 styles = ['' for _ in row.index]
                 if row['Chemical_Status'] == "Review (Potential Contaminant)":
@@ -183,20 +185,20 @@ if sample_file and blank_file:
 
         st.markdown("---")
         st.info("### 📝 Summary")
-        purity_status = "High" if purity > 85 else "Moderate" if purity > 60 else "Low"
+        purity_status = "High Integrity" if purity > 90 else "Moderate/Needs Review" if purity > 70 else "Low (Contaminated)"
         st.markdown(f"**Data Integrity Status: {purity_status}**")
         class_counts = df_final['Chemical_Status'].value_counts().reset_index()
         class_counts.columns = ['Chemical Class', 'Peak Count']
         st.table(class_counts)
 
-        # --- EXCEL EXPORT (INDIVIDUAL) ---
+        # --- EXCEL EXPORT ---
         custom_filename = st.text_input("📁 Enter Filename for Individual Export", value="LipidExpert_Report")
         final_save_name = f"{custom_filename.strip().replace(' ', '_')}.xlsx"
 
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             wb = writer.book
-            header_fmt = wb.add_format({'bold': True, 'font_size': 16, 'bg_color': '#2E75B6', 'font_color': 'white', 'border': 1, 'align': 'center'})
+            header_fmt = wb.add_format({'bold': True, 'font_size': 14, 'bg_color': '#2E75B6', 'font_color': 'white', 'border': 1, 'align': 'center'})
             label_fmt = wb.add_format({'bold': True, 'bg_color': '#D9E1F2', 'border': 1})
             val_fmt = wb.add_format({'border': 1, 'align': 'center'})
             yellow_fmt = wb.add_format({'bg_color': '#FFEB9C', 'border': 1})
@@ -205,27 +207,32 @@ if sample_file and blank_file:
 
             ws_dash = wb.add_worksheet('Dashboard')
             ws_dash.merge_range('B2:E2', 'LIPIDEXPERT ANALYTICAL SUMMARY', header_fmt)
-            metrics_list = [('Quality Threshold', q_threshold), ('RT Tolerance', rt_tolerance), ('Area Threshold', area_threshold), ('Final Biomarkers', final_count), ('Purity Score', f"{purity:.2f}%")]
+            
+            # Purity di dashboard Excel juga guna yang baru
+            metrics_list = [
+                ('Quality Threshold', q_threshold), 
+                ('RT Tolerance', rt_tolerance), 
+                ('Area Threshold', area_threshold), 
+                ('Final Biomarkers', final_count), 
+                ('Area-Weighted Purity', f"{purity:.2f}%")
+            ]
             for i, (l, v) in enumerate(metrics_list, start=4):
                 ws_dash.write(f'B{i}', l, label_fmt); ws_dash.write(f'C{i}', v, val_fmt)
             
             ws_dash.write('B10', 'COLOR LEGEND / GUIDELINE:', wb.add_format({'bold': True, 'underline': True}))
-            ws_dash.write('B11', 'Yellow Row', yellow_fmt); ws_dash.write('C11', 'Matched in Blank/Sample (Shared Compound)')
-            ws_dash.write('B12', 'Navy Blue RT Cell', navy_fmt); ws_dash.write('C12', 'RT Shift Detected (Retained)')
-            ws_dash.write('B13', 'Pink Cell', pink_fmt); ws_dash.write('C13', 'Potential Contaminant')
+            ws_dash.write('B11', 'Yellow Row', yellow_fmt); ws_dash.write('C11', 'Matched in Blank (Shared Compound)')
+            ws_dash.write('B12', 'Navy Blue RT Cell', navy_fmt); ws_dash.write('C12', 'RT Shift Detected (Retained as Isomer)')
+            ws_dash.write('B13', 'Pink Cell', pink_fmt); ws_dash.write('C13', 'Potential Contaminant (Halogenated/Benzene)')
             ws_dash.set_column('B:B', 30); ws_dash.set_column('C:C', 85)
 
             rs = 'Analytical_Report'
-            # Write Blank
             h_b.to_excel(writer, sheet_name=rs, startrow=2, index=False, header=False)
             df_b.to_excel(writer, sheet_name=rs, startrow=11, index=False, header=False)
             
-            # Write Sample
             s2 = len(df_b) + 16
             h_s.to_excel(writer, sheet_name=rs, startrow=s2+1, index=False, header=False)
             df_s.to_excel(writer, sheet_name=rs, startrow=s2+10, index=False, header=False)
             
-            # Write Corrected Unique
             s3 = s2 + len(df_s) + 15
             fh = h_s.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (CORRECTED UNIQUE)"
             fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
@@ -233,40 +240,25 @@ if sample_file and blank_file:
             df_final_clean.to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
 
             ws_rep = writer.sheets[rs]
-            
-            # --- CONDITIONAL FORMATTING (EXCEL) ---
-            # Index Chemical_Status (Biasanya kolom terakhir selepas run_strict_procedure)
             c_status_idx = df_b.columns.get_loc('Chemical_Status')
             
-            # 1. Blank Section
+            # Format Blank
             b_match_idx = df_b.columns.get_loc('In_Sample')
             b_rt_idx = df_b.columns.get_loc('RT (min)')
-            # Pink for Contaminant (Priority 1)
             ws_rep.conditional_format(11, 0, 11+len(df_b), len(df_b.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + c_status_idx)}12="Review (Potential Contaminant)"', 'format': pink_fmt})
-            # Yellow for Match (Priority 2)
             ws_rep.conditional_format(11, 0, 11+len(df_b), len(df_b.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + b_match_idx)}12="YES"', 'format': yellow_fmt})
-            # Navy for RT Shift
             ws_rep.conditional_format(11, b_rt_idx, 11+len(df_b), b_rt_idx, {'type': 'formula', 'criteria': f'=${chr(65 + b_match_idx)}12="RT_SHIFT_DETECTED"', 'format': navy_fmt})
 
-            # 2. Sample Section
+            # Format Sample
             s_match_idx = df_s.columns.get_loc('In_Blank')
             s_rt_idx = df_s.columns.get_loc('RT (min)')
-            # Pink for Contaminant
             ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), len(df_s.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + c_status_idx)}{s2+11}="Review (Potential Contaminant)"', 'format': pink_fmt})
-            # Yellow for Match
             ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), len(df_s.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + s_match_idx)}{s2+11}="YES"', 'format': yellow_fmt})
-            # Navy for RT Shift
             ws_rep.conditional_format(s2+10, s_rt_idx, s2+10+len(df_s), s_rt_idx, {'type': 'formula', 'criteria': f'=${chr(65 + s_match_idx)}{s2+11}="RT_SHIFT_DETECTED"', 'format': navy_fmt})
 
-            # 3. Final Unique Section
+            # Format Final
             f_status_idx = df_final_clean.columns.get_loc('Chemical_Status')
             ws_rep.conditional_format(s3+10, 0, s3+10+len(df_final_clean), len(df_final_clean.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + f_status_idx)}{s3+11}="Review (Potential Contaminant)"', 'format': pink_fmt})
 
-            ws_pca = wb.add_worksheet('PCA_Ready_Data')
-            pca_compounds, pca_areas = df_final['Hit Name'].tolist(), df_final['Area (Ab*s)'].tolist()
-            ws_pca.write(0, 0, 'Compound', wb.add_format({'bold': True, 'bg_color': '#E2EFDA'})); ws_pca.write(1, 0, 'Area')
-            for col, (n, a) in enumerate(zip(pca_compounds, pca_areas), start=1):
-                ws_pca.write(0, col, n); ws_pca.write(1, col, a)
-
-        st.download_button(label=f"📥 Download Report", data=output.getvalue(), file_name=final_save_name)
+        st.download_button(label=f"📥 Download Full Analytical Report", data=output.getvalue(), file_name=final_save_name)
     except Exception as e: st.error(f"Error: {e}")
