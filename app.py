@@ -34,7 +34,7 @@ st.markdown(f"""
 ---
 """)
 
-# --- CODE EMAS (UNTOUCHED LOGIC) ---
+# --- CODE EMAS (UNTOUCHED LOGIC - SHARED) ---
 def run_strict_procedure(file, q_min, area_min):
     df_full_raw = pd.read_excel(file, sheet_name='LibRes', header=None)
     df_header = df_full_raw.iloc[0:9, :].copy()
@@ -72,21 +72,20 @@ def check_match_expert(row, target_df, tol):
     closest_diff = matches.apply(lambda r: abs(row['RT (min)'] - r['RT (min)']), axis=1).min()
     return "RT_SHIFT_DETECTED", closest_diff
 
-# --- INTERFACE TABS ---
-main_tab1, main_tab2 = st.tabs(["📊 Single Analysis", "🧬 Multiple Analysis for PCA"])
+# --- TAB SYSTEM ---
+tab1, tab2 = st.tabs(["📊 Single Analysis (GOLD)", "🧬 Multiple Analysis for PCA"])
 
-with main_tab1:
+with tab1:
     st.warning("⚠️ **IMPORTANT**: Please ensure your files are in **.xlsx** format.")
-
     col1, col2 = st.columns(2)
     with col1: 
-        sample_file = st.file_uploader("Upload SAMPLE File (.xlsx only)", type=['xlsx'], key="s_sample")
+        sample_file = st.file_uploader("Upload SAMPLE File (.xlsx only)", type=['xlsx'], key="s_file")
     with col2: 
-        blank_file = st.file_uploader("Upload BLANK File (.xlsx only)", type=['xlsx'], key="s_blank")
+        blank_file = st.file_uploader("Upload BLANK File (.xlsx only)", type=['xlsx'], key="b_file")
 
     if sample_file and blank_file:
         try:
-            # INTEGRITY CHECK: Re-applying exact Code GOLD Logic
+            # Re-executing exact GOLD steps
             h_s, df_s = run_strict_procedure(sample_file, q_threshold, area_threshold)
             h_b, df_b = run_strict_procedure(blank_file, q_threshold, area_threshold)
 
@@ -109,11 +108,18 @@ with main_tab1:
             m4.metric(
                 label="Sample Purity Score", 
                 value=f"{purity:.1f}%",
-                help="**Halal Integrity Metrics (Area-Weight)**\n\n(Σ Area of Clean Lipid Peaks / Total Original Peak Area) × 100"
+                help="""
+            **Halal Integrity Metrics (Area-Weight)**
+            
+            This score represents the concentration-weighted purity of the lipid profile. 
+            It filters out solvent background (blank) and non-lipid artifacts.
+                
+            Formula:
+            (Σ Area of Clean Lipid Peaks / Total Original Peak Area) × 100
+            """
             )
 
             t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. RT Analysis"])
-            
             with t1:
                 def highlight_blank(row):
                     styles = ['' for _ in row.index]
@@ -135,16 +141,15 @@ with main_tab1:
                 st.dataframe(df_s.style.apply(highlight_sample, axis=1))
             
             with t3: st.dataframe(df_final.drop(columns=['In_Blank', 'RT_Diff']))
-            
             with t4:
                 rt_issues = df_s[df_s['In_Blank'] == "RT_SHIFT_DETECTED"]
                 if not rt_issues.empty:
-                    st.info(f"Found **{len(rt_issues)}** compounds with significant RT shifts. The compounds are retained.")
+                    st.info(f"Found **{len(rt_issues)}** compounds with significant RT shifts (>0.2). The compounds are retained.")
                     st.table(rt_issues[['Hit Name', 'RT (min)', 'RT_Diff']])
                 else: st.success("No significant RT shifts detected.")
 
             st.markdown("---")
-            custom_filename = st.text_input("📁 Rename your file before download", value="eg. SF-HEX-1", key="s_rename")
+            custom_filename = st.text_input("📁 Rename your file before download", value="eg. SF-HEX-1", key="rename_s")
             final_save_name = f"{custom_filename.strip().replace(' ', '_')}.xlsx"
 
             output = io.BytesIO()
@@ -163,33 +168,40 @@ with main_tab1:
                 for i, (l, v) in enumerate(metrics_list, start=4):
                     ws_dash.write(f'B{i}', l, label_fmt); ws_dash.write(f'C{i}', v, val_fmt)
                 
+                ws_dash.write('B10', 'COLOR LEGEND / GUIDELINE:', wb.add_format({'bold': True, 'underline': True}))
+                ws_dash.write('B11', 'Yellow Row', yellow_fmt); ws_dash.write('C11', 'Matched in Blank/Sample (Shared Compound)')
+                ws_dash.write('B12', 'Blue RT Cell', navy_fmt); ws_dash.write('C12', 'RT Shift Detected (Retained)')
+                ws_dash.write('B13', 'Pink Cell', pink_fmt); ws_dash.write('C13', 'Potential contaminant/Unique compound')
+                ws_dash.set_column('B:B', 30); ws_dash.set_column('C:C', 85)
+
                 rs = 'Analytical_Report'
                 h_b.to_excel(writer, sheet_name=rs, startrow=2, index=False, header=False)
                 df_b.to_excel(writer, sheet_name=rs, startrow=11, index=False, header=False)
-                
                 s2 = len(df_b) + 16
                 h_s.to_excel(writer, sheet_name=rs, startrow=s2+1, index=False, header=False)
                 df_s.to_excel(writer, sheet_name=rs, startrow=s2+10, index=False, header=False)
-                
                 s3 = s2 + len(df_s) + 15
                 fh = h_s.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (Clean Version ✅)"
                 fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
                 df_final.drop(columns=['In_Blank', 'RT_Diff']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
 
-                # Excel Conditional Formatting (GOLD)
                 ws_rep = writer.sheets[rs]
-                b_match_idx = df_b.columns.get_loc('In_Sample')
-                s_match_idx = df_s.columns.get_loc('In_Blank')
+                b_rt_idx, b_match_idx = df_b.columns.get_loc('RT (min)'), df_b.columns.get_loc('In_Sample')
                 ws_rep.conditional_format(11, 0, 11+len(df_b), len(df_b.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + b_match_idx)}12="YES"', 'format': yellow_fmt})
+                ws_rep.conditional_format(11, b_rt_idx, 11+len(df_b), b_rt_idx, {'type': 'formula', 'criteria': f'=${chr(65 + b_match_idx)}12="RT_SHIFT_DETECTED"', 'format': navy_fmt})
+                s_rt_idx, s_match_idx = df_s.columns.get_loc('RT (min)'), df_s.columns.get_loc('In_Blank')
                 ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), len(df_s.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + s_match_idx)}{s2+11}="YES"', 'format': yellow_fmt})
+                ws_rep.conditional_format(s2+10, s_rt_idx, s2+10+len(df_s), s_rt_idx, {'type': 'formula', 'criteria': f'=${chr(65 + s_match_idx)}{s2+11}="RT_SHIFT_DETECTED"', 'format': navy_fmt})
+                f_status_idx = df_final.columns.get_loc('Chemical_Status')
+                ws_rep.conditional_format(s3+10, f_status_idx, s3+10+len(df_final), f_status_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': pink_fmt})
 
             st.download_button(label=f"Download Report", data=output.getvalue(), file_name=final_save_name)
         except Exception as e: st.error(f"Error: {e}")
 
-with main_tab2:
+with tab2:
     st.header("🧬 Multiple Analysis for PCA")
-    m_blank = st.file_uploader("Upload ONE Blank File", type=['xlsx'], key="m_blank")
-    m_samples = st.file_uploader("Upload MULTIPLE Sample Files", type=['xlsx'], accept_multiple_files=True, key="m_samples")
+    m_blank = st.file_uploader("Upload ONE Blank File", type=['xlsx'], key="m_b")
+    m_samples = st.file_uploader("Upload MULTIPLE Sample Files", type=['xlsx'], accept_multiple_files=True, key="m_s")
 
     if m_blank and m_samples:
         try:
@@ -197,23 +209,24 @@ with main_tab2:
             pca_list = []
             all_compounds = set()
 
-            for s_file in m_samples:
-                _, df_s_raw = run_strict_procedure(s_file, q_threshold, area_threshold)
+            for s_f in m_samples:
+                _, df_s_raw = run_strict_procedure(s_f, q_threshold, area_threshold)
                 res = df_s_raw.apply(lambda r: check_match_expert(r, df_b_multi, rt_tolerance), axis=1)
-                df_clean = df_s_raw[[x[0] in ["NO", "RT_SHIFT_DETECTED"] for x in res]].copy()
+                df_clean = df_s_raw[res.apply(lambda x: x[0] in ["NO", "RT_SHIFT_DETECTED"])].copy()
                 
-                s_data = {row['Hit Name']: row['Area (Ab*s)'] for _, row in df_clean.iterrows()}
-                s_data['Sample Name'] = s_file.name
-                pca_list.append(s_data)
+                s_dict = {row['Hit Name']: row['Area (Ab*s)'] for _, row in df_clean.iterrows()}
+                s_dict['Sample Name'] = s_f.name
+                pca_list.append(s_dict)
                 all_compounds.update(df_clean['Hit Name'].tolist())
 
             df_pca = pd.DataFrame(pca_list)
-            df_pca = df_pca[['Sample Name'] + sorted(list(all_compounds))].fillna(0)
-            st.subheader("Ready for PCA Table (Absorbance)")
+            cols = ['Sample Name'] + sorted(list(all_compounds))
+            df_pca = df_pca.reindex(columns=cols).fillna(0)
+            st.subheader("Ready for PCA Table (Raw Absorbance)")
             st.dataframe(df_pca)
             
             pca_out = io.BytesIO()
             with pd.ExcelWriter(pca_out, engine='xlsxwriter') as writer:
                 df_pca.to_excel(writer, sheet_name='PCA_Data', index=False)
-            st.download_button("Download PCA Matrix", data=pca_out.getvalue(), file_name="PCA_Matrix.xlsx")
-        except Exception as e: st.error(f"Error: {e}")
+            st.download_button("Download PCA Matrix", data=pca_out.getvalue(), file_name="PCA_Matrix_Ready.xlsx")
+        except Exception as e: st.error(f"PCA Error: {e}")
