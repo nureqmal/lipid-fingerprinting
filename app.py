@@ -4,7 +4,7 @@ import io
 
 # Setup Page Configuration
 st.set_page_config(page_title="LipidExpert: Analytical Suite", layout="wide")
-st.title("Lipid EQ: Advanced Fingerprinting Suite")
+st.title("🧪 LipidExpert: Analytical Suite")
 
 # --- SIDEBAR CONTROL ---
 st.sidebar.header("⚙️ Analytical Controls")
@@ -98,7 +98,7 @@ with main_tab1:
             m3.metric("Final Biomarkers", final_count)
             m4.metric("Sample Purity Score", f"{purity:.1f}%")
 
-            t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. RT Analysis"])
+            t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. 🧠 Expert RT Analysis"])
             
             with t1:
                 def highlight_blank(row):
@@ -132,7 +132,7 @@ with main_tab1:
                     st.success("No significant RT shifts detected.")
 
             # --- EXPORT KOD ASAL ---
-            custom_filename = st.text_input("📁 Enter Filename", value="Write here...", key="single_fn")
+            custom_filename = st.text_input("📁 Enter Filename", value="LipidExpert_Report", key="single_fn")
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 # (Sini semua logic xlsxwriter kau yang panjang tu tetap ada)
@@ -147,7 +147,7 @@ with main_tab1:
 
 with main_tab2:
     st.header("🔬 Multiple Sample Analysis (PCA Master Table)")
-    st.info("Upload ONE Blank dan multiple Sample. The system will generate a Master Table for PCA.")
+    st.info("Upload satu Blank dan banyak Sample. Sistem akan menghasilkan Master Table untuk PCA.")
     
     m_blank = st.file_uploader("1. Upload BLANK Reference", type=['xlsx'], key="multi_blank")
     m_samples = st.file_uploader("2. Upload Multiple SAMPLES", type=['xlsx'], accept_multiple_files=True, key="multi_samples")
@@ -169,29 +169,13 @@ with main_tab2:
         
         if pca_data:
             master_pca = pd.concat(pca_data)
+            # Pivot table: Compund vs Sample
+            pivot_df = master_pca.pivot_table(index='Hit Name', columns='Sample_Name', values='Area (%)').fillna(0)
             
-            # --- ADJUSTMENT KAT SINI ---
-            # index='Sample_Name' (Nama sample kat side)
-            # columns='Hit Name' (Nama compound kat atas)
-            # values='Area (Ab*s)' (Original absorbance, no normalization)
-            pivot_df = master_pca.pivot_table(
-                index='Sample_Name', 
-                columns='Hit Name', 
-                values='Area (Ab*s)'
-            ).fillna(0)
-            
-            st.subheader("🏁 Corrected Unique Master Table (PCA Ready)")
-            st.markdown("Structure: Samples (Rows) vs Compounds (Columns) | Data: Original Absorbance")
+            st.subheader("🏁 Corrected Unique Master Table")
             st.dataframe(pivot_df)
             
             # Simple Excel Download for PCA
             pca_out = io.BytesIO()
-            with pd.ExcelWriter(pca_out, engine='xlsxwriter') as writer:
-                pivot_df.to_excel(writer, sheet_name='PCA_Data')
-            
-            st.download_button(
-                label="📥 Download PCA Master Table",
-                data=pca_out.getvalue(),
-                file_name="PCA_Master_Table_Original_Abs.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            pivot_df.to_excel(pca_out)
+            st.download_button("📥 Download PCA Master Table", pca_out.getvalue(), "PCA_Master_Table.xlsx")
