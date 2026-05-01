@@ -120,7 +120,7 @@ if sample_file and blank_file:
         )
 
         # --- DATA ANALYSIS TABS ---
-        t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. 🧠 Expert RT Analysis"])
+        t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. RT Analysis"])
         
         with t1: 
             def highlight_blank(row):
@@ -176,7 +176,7 @@ if sample_file and blank_file:
             
             ws_dash.write('B10', 'COLOR LEGEND / GUIDELINE:', wb.add_format({'bold': True, 'underline': True}))
             ws_dash.write('B11', 'Yellow Row', yellow_fmt); ws_dash.write('C11', 'Matched in Blank/Sample (Shared Compound)')
-            ws_dash.write('B12', 'Navy Blue RT Cell', navy_fmt); ws_dash.write('C12', 'RT Shift Detected (Retained)')
+            ws_dash.write('B12', 'Blue RT Cell', navy_fmt); ws_dash.write('C12', 'RT Shift Detected (Retained)')
             ws_dash.write('B13', 'Pink Cell', pink_fmt); ws_dash.write('C13', 'Potential Contaminant')
             ws_dash.set_column('B:B', 30); ws_dash.set_column('C:C', 85)
 
