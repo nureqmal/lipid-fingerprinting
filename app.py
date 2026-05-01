@@ -73,7 +73,7 @@ def check_match_expert(row, target_df, tol):
     return "RT_SHIFT_DETECTED", closest_diff
 
 # --- TAB SYSTEM ---
-tab1, tab2 = st.tabs(["📊 Single Analysis (GOLD)", "🧬 Multiple Analysis for PCA"])
+tab1, tab2 = st.tabs(["Single File (Detail)", "Multiple Files for PCA"])
 
 with tab1:
     st.warning("⚠️ **IMPORTANT**: Please ensure your files are in **.xlsx** format.")
