@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+from xlsxwriter.utility import xl_col_to_name
 
 # Setup Page Configuration
 st.set_page_config(page_title="LipidExpert: Analytical Suite", layout="wide")
@@ -49,50 +50,4 @@ def run_strict_procedure(file, q_min, area_min):
     df = df[(df['Quality'] >= q_min) & (df['Area (%)'] >= area_min)]
 
     blacklist = ['siloxane', 'phthalate', 'octaxilonaxe', 'bleed', 'plasticizer', 'adipate', 'column bleed']
-    contaminants = ['iodo', 'chloro', 'bromo', 'fluoro', 'iodide', 'chloride', 'thiophene', 'benzothiophene', 'naphthalene', 'benzene,']
-
-    def classify_compound(name):
-        n = str(name).lower()
-        if any(x in n for x in blacklist): return "Discard (Artifact)"
-        if any(x in n for x in contaminants): return "Review (Potential Contaminant)"
-        return "Clean (Lipid/Oxidation)"
-
-    df['Chemical_Status'] = df['Hit Name'].apply(classify_compound)
-    df = df[df['Chemical_Status'] != "Discard (Artifact)"]
-    df = df.sort_values(by='Area (Ab*s)', ascending=False).drop_duplicates(subset=['Hit Name'], keep='first')
-
-    return df_header, df.sort_values(by='RT (min)')
-
-# --- FILE UPLOAD SECTION ---
-st.warning("⚠️ **IMPORTANT**: Please ensure your files are in **.xlsx** format.")
-
-col1, col2 = st.columns(2)
-with col1:
-    sample_file = st.file_uploader("Upload SAMPLE File (.xlsx only)", type=['xlsx'])
-with col2:
-    blank_file = st.file_uploader("Upload BLANK File (.xlsx only)", type=['xlsx'])
-
-if sample_file and blank_file:
-    try:
-        h_s, df_s = run_strict_procedure(sample_file, q_threshold, area_threshold)
-        h_b, df_b = run_strict_procedure(blank_file, q_threshold, area_threshold)
-
-        # --- EXPERT RT SHIFT LOGIC ---
-        def check_match_expert(row, target_df, tol):
-            matches = target_df[target_df['Hit Name'] == row['Hit Name']]
-            if matches.empty: return "NO", None
-            for _, t_row in matches.iterrows():
-                diff = abs(row['RT (min)'] - t_row['RT (min)'])
-                if diff <= tol: return "YES", diff
-            closest_diff = matches.apply(lambda r: abs(row['RT (min)'] - r['RT (min)']), axis=1).min()
-            return "RT_SHIFT_DETECTED", closest_diff
-
-        res_s = df_s.apply(lambda r: check_match_expert(r, df_b, rt_tolerance), axis=1)
-        df_s['In_Blank'] = [x[0] for x in res_s]
-        df_s['RT_Diff'] = [x[1] for x in res_s]
-
-        res_b = df_b.apply(lambda r: check_match_expert(r, df_s, rt_tolerance), axis=1)
-        df_b['In_Sample'] = [x[0] for x in res_b]
-
-        df_final = df_s[df_s['In_Blank'].isin(["NO", "RT_SHIFT_DETECTED"])].copy()
-        total_sample, excluded, final_count = len(df_s), len(df
+    contaminants = ['iodo', 'chloro', 'bromo', 'fluoro', 'iodide', 'chloride', 'thioph
