@@ -155,7 +155,7 @@ if sample_file and blank_file:
         st.markdown("---")
         
         # --- EXPORT LOGIC ---
-        custom_filename = st.text_input("📁 Enter Filename for Individual Export", value="LipidExpert_Report")
+        custom_filename = st.text_input("📁 Enter Filename for Individual Export", value="eg. SF_Hexane-1")
         final_save_name = f"{custom_filename.strip().replace(' ', '_')}.xlsx"
 
         output = io.BytesIO()
