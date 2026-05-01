@@ -140,8 +140,7 @@ elif mode == "Batch Analysis":
     blank_file = st.file_uploader("Upload SINGLE BLANK File (.xlsx only)", type=['xlsx'])
 
 
-if sample_file and blank_file:
-
+if mode == "Single Analysis" and sample_file and blank_file:
     try:
 
         h_s, df_s = run_strict_procedure(sample_file, q_threshold, area_threshold)
