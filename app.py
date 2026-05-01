@@ -169,13 +169,29 @@ with main_tab2:
         
         if pca_data:
             master_pca = pd.concat(pca_data)
-            # Pivot table: Compund vs Sample
-            pivot_df = master_pca.pivot_table(index='Hit Name', columns='Sample_Name', values='Area (%)').fillna(0)
             
-            st.subheader("🏁 Corrected Unique Master Table")
+            # --- ADJUSTMENT KAT SINI ---
+            # index='Sample_Name' (Nama sample kat side)
+            # columns='Hit Name' (Nama compound kat atas)
+            # values='Area (Ab*s)' (Original absorbance, no normalization)
+            pivot_df = master_pca.pivot_table(
+                index='Sample_Name', 
+                columns='Hit Name', 
+                values='Area (Ab*s)'
+            ).fillna(0)
+            
+            st.subheader("🏁 Corrected Unique Master Table (PCA Ready)")
+            st.markdown("Structure: Samples (Rows) vs Compounds (Columns) | Data: Original Absorbance")
             st.dataframe(pivot_df)
             
             # Simple Excel Download for PCA
             pca_out = io.BytesIO()
-            pivot_df.to_excel(pca_out)
-            st.download_button("📥 Download PCA Master Table", pca_out.getvalue(), "PCA_Master_Table.xlsx")
+            with pd.ExcelWriter(pca_out, engine='xlsxwriter') as writer:
+                pivot_df.to_excel(writer, sheet_name='PCA_Data')
+            
+            st.download_button(
+                label="📥 Download PCA Master Table",
+                data=pca_out.getvalue(),
+                file_name="PCA_Master_Table_Original_Abs.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
