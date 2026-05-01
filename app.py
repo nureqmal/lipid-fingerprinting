@@ -11,7 +11,7 @@ st.sidebar.header("⚙️ Analytical Controls")
 
 q_threshold = st.sidebar.slider(
     "Select NIST Quality Threshold", 50, 95, 80, 5,
-    help="**NIST Match Factor:** Filters compound identity accuracy. A value >80 means the sample spectrum matches the NIST library very well."
+    help="**NIST Match Factor:** Filters compound identity accuracy."
 )
 
 rt_tolerance = st.sidebar.slider(
@@ -21,7 +21,7 @@ rt_tolerance = st.sidebar.slider(
 
 area_threshold = st.sidebar.slider(
     "Min Area % (Noise Filter)", 0.00, 5.00, 0.00, 0.01,
-    help="**Baseline Cut-off:** Removes small peaks (noise) that are not quantitatively significant."
+    help="**Baseline Cut-off:** Removes small peaks (noise)."
 )
 
 st.markdown(f"""
@@ -108,7 +108,7 @@ if sample_file and blank_file:
         m3.metric("Final Unique Compounds", final_count)
         m4.metric(label="Sample Purity Score", value=f"{purity:.1f}%")
 
-        # --- DATA ANALYSIS TABS (REDUCED) ---
+        # --- DATA ANALYSIS TABS ---
         t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. 🧠 Expert RT Analysis"])
         
         with t1: 
@@ -140,21 +140,53 @@ if sample_file and blank_file:
             st.write("### 🧬 RT Shift Discussion Logic")
             rt_issues = df_s[df_s['In_Blank'] == "RT_SHIFT_DETECTED"]
             if not rt_issues.empty:
-                st.info(f"Found **{len(rt_issues)}** compounds with same Hit Name but significant RT shifts.")
+                st.info(f"Found **{len(rt_issues)}** compounds with significant RT shifts.")
                 st.table(rt_issues[['Hit Name', 'RT (min)', 'RT_Diff']])
             else:
                 st.success("No significant RT shifts detected.")
 
         st.markdown("---")
-        st.info("### 📝 Summary")
-        purity_status = "High" if purity > 85 else "Moderate" if purity > 60 else "Low"
-        st.markdown(f"**Data Integrity Status: {purity_status}**")
-        class_counts = df_final['Chemical_Status'].value_counts().reset_index()
-        class_counts.columns = ['Chemical Class', 'Peak Count']
-        st.table(class_counts)
-
+        
         # Individual Export logic
         custom_filename = st.text_input("📁 Enter Filename for Individual Export", value="LipidExpert_Report")
         final_save_name = f"{custom_filename.strip().replace(' ', '_')}.xlsx"
 
-        output = io.BytesIO
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            wb = writer.book
+            header_fmt = wb.add_format({'bold': True, 'font_size': 16, 'bg_color': '#2E75B6', 'font_color': 'white', 'border': 1, 'align': 'center'})
+            label_fmt = wb.add_format({'bold': True, 'bg_color': '#D9E1F2', 'border': 1})
+            val_fmt = wb.add_format({'border': 1, 'align': 'center'})
+            yellow_fmt = wb.add_format({'bg_color': '#FFEB9C', 'border': 1})
+            navy_fmt = wb.add_format({'bg_color': '#002060', 'font_color': 'white', 'border': 1})
+
+            ws_dash = wb.add_worksheet('Dashboard')
+            ws_dash.merge_range('B2:E2', 'LIPIDEXPERT ANALYTICAL SUMMARY', header_fmt)
+            metrics_list = [('Quality Threshold', q_threshold), ('RT Tolerance', rt_tolerance), ('Area Threshold', area_threshold), ('Final Biomarkers', final_count), ('Purity Score', f"{purity:.2f}%")]
+            for i, (l, v) in enumerate(metrics_list, start=4):
+                ws_dash.write(f'B{i}', l, label_fmt); ws_dash.write(f'C{i}', v, val_fmt)
+            
+            rs = 'Analytical_Report'
+            h_b.to_excel(writer, sheet_name=rs, startrow=2, index=False, header=False)
+            df_b.to_excel(writer, sheet_name=rs, startrow=11, index=False, header=False)
+            
+            s2 = len(df_b) + 16
+            h_s.to_excel(writer, sheet_name=rs, startrow=s2+1, index=False, header=False)
+            df_s.to_excel(writer, sheet_name=rs, startrow=s2+10, index=False, header=False)
+            
+            s3 = s2 + len(df_s) + 15
+            fh = h_s.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (CORRECTED UNIQUE)"
+            fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
+            df_final.drop(columns=['In_Blank', 'RT_Diff']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
+
+            ws_rep = writer.sheets[rs]
+            b_match_idx = df_b.columns.get_loc('In_Sample')
+            ws_rep.conditional_format(11, 0, 11+len(df_b), len(df_b.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + b_match_idx)}12="YES"', 'format': yellow_fmt})
+            
+            s_match_idx = df_s.columns.get_loc('In_Blank')
+            ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), len(df_s.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + s_match_idx)}{s2+11}="YES"', 'format': yellow_fmt})
+
+        st.download_button(label=f"📥 Download Report", data=output.getvalue(), file_name=final_save_name)
+    
+    except Exception as e: 
+        st.error(f"Error dalam pemprosesan: {e}")
