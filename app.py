@@ -4,24 +4,24 @@ import io
 
 # Setup Page Configuration
 st.set_page_config(page_title="LipidExpert: Analytical Suite", layout="wide")
-st.title("🧪 LipidExpert: Analytical Suite")
+st.title("Lipid EQ- Sorting & Cleaning")
 
 # --- SIDEBAR CONTROL ---
 st.sidebar.header("⚙️ Analytical Controls")
 
 q_threshold = st.sidebar.slider(
     "Select NIST Quality Threshold", 50, 95, 80, 5,
-    help="**NIST Match Factor:** Filters compound identity accuracy."
+    help="**NIST Match Factor:** Filters compound identity accuracy. (Default: 80)"
 )
 
 rt_tolerance = st.sidebar.slider(
     "Select RT Tolerance (min)", 0.01, 0.20, 0.05, 0.01,
-    help="**Retention Time Buffer:** Time error limit for comparing Sample vs Blank."
+    help="**Retention Time Buffer:** Time error limit for comparing Sample vs Blank.(Default: 0.05)"
 )
 
 area_threshold = st.sidebar.slider(
     "Min Area % (Noise Filter)", 0.00, 5.00, 0.00, 0.01,
-    help="**Baseline Cut-off:** Removes small peaks (noise)."
+    help="**Baseline Cut-off:** Removes small peaks/noise (Default: 0.00)."
 )
 
 st.markdown(f"""
@@ -49,7 +49,7 @@ def run_strict_procedure(file, q_min, area_min):
     df = df[(df['Quality'] >= q_min) & (df['Area (%)'] >= area_min)]
 
     blacklist = ['siloxane', 'phthalate', 'octaxilonaxe', 'bleed', 'plasticizer', 'adipate', 'column bleed']
-    contaminants = ['iodo', 'chloro', 'bromo', 'fluoro', 'iodide', 'chloride', 'thiophene', 'benzothiophene', 'naphthalene', 'benzene,']
+    contaminants = ['iodo', 'chloro', 'bromo', 'fluoro', 'iodide', 'chloride', 'thiophene', 'benzo', 'sulphur', 'benzothiophene', 'naphthalene', 'benzene,']
 
     def classify_compound(name):
         n = str(name).lower()
@@ -114,7 +114,7 @@ if sample_file and blank_file:
             This score represents the concentration-weighted purity of the lipid profile. 
             It filters out solvent background (blank) and non-lipid artifacts.
                 
-            **Formula:**
+            Formula:
             (Σ Area of Clean Lipid Peaks / Total Original Peak Area) × 100
             """
         )
