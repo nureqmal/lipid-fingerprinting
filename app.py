@@ -15,8 +15,7 @@ st.sidebar.header("⚙️ Analytical Controls")
 
 q_threshold = st.sidebar.slider(
     "Select NIST Quality Threshold", 50, 95, 80, 5,
-    help="**NIST Match Factor:** Filters compound identity accuracy. A value >80 means the sample spectrum matches the NIST library very well. The higher the value, the fewer false positives but the higher the risk of missing real data.
-"
+    help="**NIST Match Factor:** Filters compound identity accuracy. A value >80 means the sample spectrum matches the NIST library very well. The higher the value, the fewer false positives but the higher the risk of missing real data."
 )
 
 rt_tolerance = st.sidebar.slider(
