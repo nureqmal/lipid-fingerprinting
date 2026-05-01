@@ -10,11 +10,23 @@ st.title("🧪 LipidExpert: Analytical Suite")
 if 'master_list' not in st.session_state:
     st.session_state.master_list = []
 
-# --- SIDEBAR CONTROL ---
+# --- SIDEBAR CONTROL (UPDATED WITH TOOLTIPS) ---
 st.sidebar.header("⚙️ Analytical Controls")
-q_threshold = st.sidebar.slider("Select NIST Quality Threshold", 50, 95, 80, 5)
-rt_tolerance = st.sidebar.slider("Select RT Tolerance (min)", 0.01, 0.20, 0.05, 0.01)
-area_threshold = st.sidebar.slider("Min Area % (Noise Filter)", 0.00, 5.00, 0.00, 0.01)
+
+q_threshold = st.sidebar.slider(
+    "Select NIST Quality Threshold", 50, 95, 80, 5,
+    help="**NIST Match Factor:** Menapis ketepatan identiti kompaun. Nilai >80 bermaksud spektrum sampel sangat padan dengan library NIST. Semakin tinggi nilai, semakin sikit 'false positive' tapi risiko kehilangan data sebenar pun tinggi."
+)
+
+rt_tolerance = st.sidebar.slider(
+    "Select RT Tolerance (min)", 0.01, 0.20, 0.05, 0.01,
+    help="**Retention Time Buffer:** Had ralat masa untuk membandingkan Sample vs Blank. Jika kompaun yang sama muncul dalam range ini, ia dianggap 'Solvent Peak' dan akan dibuang. Default 0.05 adalah standard gold bagi GC-MS modern."
+)
+
+area_threshold = st.sidebar.slider(
+    "Min Area % (Noise Filter)", 0.00, 5.00, 0.00, 0.01,
+    help="**Baseline Cut-off:** Membuang puncak-puncak kecil (noise) yang tidak signifikan secara kuantitatif. Default 0.00 membenarkan semua data masuk, manakala nilai >0.10 biasanya digunakan untuk fokus pada komponen utama (Major Compounds) sahaja."
+)
 
 if st.sidebar.button("🗑️ Reset Master Table"):
     st.session_state.master_list = []
@@ -103,19 +115,18 @@ if sample_file and blank_file:
         m2.metric("Blank Matches (Purged)", excluded, delta=f"-{excluded}", delta_color="inverse")
         m3.metric("Final Unique Compounds", final_count)
         
-        # --- ADDED THE "?" EXPLANATION HERE ---
         m4.metric(
             label="Sample Purity Score", 
             value=f"{purity:.1f}%",
             help="""
             **Halal Integrity Metrics (Area-Weight)**
             
-         This score represents the concentration-weighted purity of the lipid profile. 
-                It filters out solvent background (blank) and non-lipid artifacts.
+            This score represents the concentration-weighted purity of the lipid profile. 
+            It filters out solvent background (blank) and non-lipid artifacts.
                 
-                **Formula:**
-                (Σ Area of Clean Lipid Peaks / Total Original Peak Area) × 100
-                """
+            **Formula:**
+            (Σ Area of Clean Lipid Peaks / Total Original Peak Area) × 100
+            """
             )
 
         # --- DATA ANALYSIS TABS ---
