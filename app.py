@@ -20,12 +20,12 @@ q_threshold = st.sidebar.slider(
 
 rt_tolerance = st.sidebar.slider(
     "Select RT Tolerance (min)", 0.01, 0.20, 0.05, 0.01,
-    help="**Retention Time Buffer:** Had ralat masa untuk membandingkan Sample vs Blank. Jika kompaun yang sama muncul dalam range ini, ia dianggap 'Solvent Peak' dan akan dibuang. Default 0.05 adalah standard gold bagi GC-MS modern."
+    help="**Retention Time Buffer:** Time error limit for comparing Sample vs Blank. If the same compound appears in this range, it is considered a 'Solvent Peak' and will be discarded. The default of 0.05 is the gold standard for modern GC-MS."
 )
 
 area_threshold = st.sidebar.slider(
     "Min Area % (Noise Filter)", 0.00, 5.00, 0.00, 0.01,
-    help="**Baseline Cut-off:** Membuang puncak-puncak kecil (noise) yang tidak signifikan secara kuantitatif. Default 0.00 membenarkan semua data masuk, manakala nilai >0.10 biasanya digunakan untuk fokus pada komponen utama (Major Compounds) sahaja."
+    help="**Baseline Cut-off:** Removes small peaks (noise) that are not quantitatively significant. The default of 0.00 allows all data to pass through, while values ​​>0.10 are usually used to focus on the major components (Major Compounds) only."
 )
 
 if st.sidebar.button("🗑️ Reset Master Table"):
