@@ -148,7 +148,7 @@ if sample_file and blank_file:
         with t4:
             rt_issues = df_s[df_s['In_Blank'] == "RT_SHIFT_DETECTED"]
             if not rt_issues.empty:
-                st.info(f"Found **{len(rt_issues)}** compounds with significant RT shifts.")
+                st.info(f"Found **{len(rt_issues)}** compounds with significant RT shifts (>0.2). The compounds are retained.")
                 st.table(rt_issues[['Hit Name', 'RT (min)', 'RT_Diff']])
             else: st.success("No significant RT shifts detected.")
 
