@@ -85,12 +85,12 @@ if sample_file and blank_file:
             closest_diff = matches.apply(lambda r: abs(row['RT (min)'] - r['RT (min)']), axis=1).min()
             return "RT_SHIFT_DETECTED", closest_diff
 
-        # 1. Map Sample to Blank (Existing)
+        # 1. Map Sample to Blank
         res_s = df_s.apply(lambda r: check_match_expert(r, df_b, rt_tolerance), axis=1)
         df_s['In_Blank'] = [x[0] for x in res_s]
         df_s['RT_Diff'] = [x[1] for x in res_s]
 
-        # 2. Map Blank to Sample (New for Highlighting Blank)
+        # 2. Map Blank to Sample
         res_b = df_b.apply(lambda r: check_match_expert(r, df_s, rt_tolerance), axis=1)
         df_b['In_Sample'] = [x[0] for x in res_b]
 
@@ -112,8 +112,13 @@ if sample_file and blank_file:
         with t1: 
             def highlight_blank(row):
                 styles = ['' for _ in row.index]
-                if row['In_Sample'] == "YES":
+                # Priority 1: Contaminant (Pink)
+                if row['Chemical_Status'] == "Review (Potential Contaminant)":
+                    styles = ['background-color: #FFC0CB' for _ in row.index]
+                # Priority 2: In Sample (Yellow)
+                elif row['In_Sample'] == "YES":
                     styles = ['background-color: #FFEB9C' for _ in row.index]
+                # Priority 3: RT Shift (Navy)
                 elif row['In_Sample'] == "RT_SHIFT_DETECTED":
                     rt_idx = row.index.get_loc('RT (min)')
                     styles[rt_idx] = 'background-color: #002060; color: white'
@@ -123,8 +128,13 @@ if sample_file and blank_file:
         with t2: 
             def highlight_sample(row):
                 styles = ['' for _ in row.index]
-                if row['In_Blank'] == "YES":
+                # Priority 1: Contaminant (Pink)
+                if row['Chemical_Status'] == "Review (Potential Contaminant)":
+                    styles = ['background-color: #FFC0CB' for _ in row.index]
+                # Priority 2: In Blank (Yellow)
+                elif row['In_Blank'] == "YES":
                     styles = ['background-color: #FFEB9C' for _ in row.index]
+                # Priority 3: RT Shift (Navy)
                 elif row['In_Blank'] == "RT_SHIFT_DETECTED":
                     rt_idx = row.index.get_loc('RT (min)')
                     styles[rt_idx] = 'background-color: #002060; color: white'
@@ -132,7 +142,13 @@ if sample_file and blank_file:
             st.dataframe(df_s.style.apply(highlight_sample, axis=1))
         
         with t3: 
-            st.dataframe(df_final.drop(columns=['In_Blank', 'RT_Diff']))
+            # Final Fingerprint juga highlight pink untuk contaminant
+            def highlight_final(row):
+                styles = ['' for _ in row.index]
+                if row['Chemical_Status'] == "Review (Potential Contaminant)":
+                    styles = ['background-color: #FFC0CB' for _ in row.index]
+                return styles
+            st.dataframe(df_final.drop(columns=['In_Blank', 'RT_Diff']).style.apply(highlight_final, axis=1))
 
         with t4:
             st.write("### 🧬 RT Shift Discussion Logic")
@@ -213,21 +229,38 @@ if sample_file and blank_file:
             s3 = s2 + len(df_s) + 15
             fh = h_s.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (CORRECTED UNIQUE)"
             fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
-            df_final.drop(columns=['In_Blank', 'RT_Diff']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
+            df_final_clean = df_final.drop(columns=['In_Blank', 'RT_Diff'])
+            df_final_clean.to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
 
             ws_rep = writer.sheets[rs]
             
-            # Formatting Blank Section (Highlighting Sample Matches)
-            b_rt_idx = df_b.columns.get_loc('RT (min)')
+            # --- CONDITIONAL FORMATTING (EXCEL) ---
+            # Index Chemical_Status (Biasanya kolom terakhir selepas run_strict_procedure)
+            c_status_idx = df_b.columns.get_loc('Chemical_Status')
+            
+            # 1. Blank Section
             b_match_idx = df_b.columns.get_loc('In_Sample')
+            b_rt_idx = df_b.columns.get_loc('RT (min)')
+            # Pink for Contaminant (Priority 1)
+            ws_rep.conditional_format(11, 0, 11+len(df_b), len(df_b.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + c_status_idx)}12="Review (Potential Contaminant)"', 'format': pink_fmt})
+            # Yellow for Match (Priority 2)
             ws_rep.conditional_format(11, 0, 11+len(df_b), len(df_b.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + b_match_idx)}12="YES"', 'format': yellow_fmt})
+            # Navy for RT Shift
             ws_rep.conditional_format(11, b_rt_idx, 11+len(df_b), b_rt_idx, {'type': 'formula', 'criteria': f'=${chr(65 + b_match_idx)}12="RT_SHIFT_DETECTED"', 'format': navy_fmt})
 
-            # Formatting Sample Section (Highlighting Blank Matches)
-            s_rt_idx = df_s.columns.get_loc('RT (min)')
+            # 2. Sample Section
             s_match_idx = df_s.columns.get_loc('In_Blank')
+            s_rt_idx = df_s.columns.get_loc('RT (min)')
+            # Pink for Contaminant
+            ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), len(df_s.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + c_status_idx)}{s2+11}="Review (Potential Contaminant)"', 'format': pink_fmt})
+            # Yellow for Match
             ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), len(df_s.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + s_match_idx)}{s2+11}="YES"', 'format': yellow_fmt})
+            # Navy for RT Shift
             ws_rep.conditional_format(s2+10, s_rt_idx, s2+10+len(df_s), s_rt_idx, {'type': 'formula', 'criteria': f'=${chr(65 + s_match_idx)}{s2+11}="RT_SHIFT_DETECTED"', 'format': navy_fmt})
+
+            # 3. Final Unique Section
+            f_status_idx = df_final_clean.columns.get_loc('Chemical_Status')
+            ws_rep.conditional_format(s3+10, 0, s3+10+len(df_final_clean), len(df_final_clean.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + f_status_idx)}{s3+11}="Review (Potential Contaminant)"', 'format': pink_fmt})
 
             ws_pca = wb.add_worksheet('PCA_Ready_Data')
             pca_compounds, pca_areas = df_final['Hit Name'].tolist(), df_final['Area (Ab*s)'].tolist()
