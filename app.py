@@ -24,6 +24,8 @@ if 'master_list' not in st.session_state:
 
 # --- SIDEBAR CONTROL ---
 
+mode = st.radio("🧭 Select Analysis Mode", ["Single Analysis", "Batch Analysis"])
+
 st.sidebar.header("⚙️ Analytical Controls")
 
 q_threshold = st.sidebar.slider("Select NIST Quality Threshold", 50, 95, 80, 5)
@@ -126,16 +128,16 @@ st.warning("⚠️ **IMPORTANT**: Please ensure your files are in **.xlsx** form
 
 
 
-col1, col2 = st.columns(2)
+if mode == "Single Analysis":
+    col1, col2 = st.columns(2)
+    with col1: 
+        sample_file = st.file_uploader("Upload SAMPLE File (.xlsx only)", type=['xlsx'])
+    with col2: 
+        blank_file = st.file_uploader("Upload BLANK File (.xlsx only)", type=['xlsx'])
 
-with col1: 
-
-    sample_file = st.file_uploader("Upload SAMPLE File (.xlsx only)", type=['xlsx'])
-
-with col2: 
-
-    blank_file = st.file_uploader("Upload BLANK File (.xlsx only)", type=['xlsx'])
-
+elif mode == "Batch Analysis":
+    sample_files = st.file_uploader("📦 Upload MULTIPLE SAMPLE Files (.xlsx)", type=['xlsx'], accept_multiple_files=True)
+    blank_file = st.file_uploader("Upload SINGLE BLANK File (.xlsx only)", type=['xlsx'])
 
 
 if sample_file and blank_file:
@@ -455,3 +457,75 @@ if sample_file and blank_file:
         st.download_button(label=f"📥 Download Report", data=output.getvalue(), file_name=final_save_name)
 
     except Exception as e: st.error(f"Error: {e}")
+
+# =========================
+# 🔥 BATCH MODE (ADD-ON SAHAJA)
+# =========================
+if mode == "Batch Analysis" and sample_files and blank_file:
+
+    st.subheader("📦 Batch Processing Mode")
+
+    try:
+        # Process blank sekali sahaja
+        h_b, df_b = run_strict_procedure(blank_file, q_threshold, area_threshold)
+
+        master_list_auto = []
+        summary_list = []
+
+        for file in sample_files:
+            sample_name = file.name.replace(".xlsx", "")
+
+            h_s, df_s = run_strict_procedure(file, q_threshold, area_threshold)
+
+            # reuse EXACT logic
+            def check_match_expert(row, target_df, tol):
+                matches = target_df[target_df['Hit Name'] == row['Hit Name']]
+                if matches.empty:
+                    return "NO", None
+                for _, t_row in matches.iterrows():
+                    diff = abs(row['RT (min)'] - t_row['RT (min)'])
+                    if diff <= tol:
+                        return "YES", diff 
+                closest_diff = matches.apply(lambda r: abs(row['RT (min)'] - r['RT (min)']), axis=1).min()
+                return "RT_SHIFT_DETECTED", closest_diff
+
+            res = df_s.apply(lambda r: check_match_expert(r, df_b, rt_tolerance), axis=1)
+            df_s['In_Blank'] = [x[0] for x in res]
+            df_s['RT_Diff'] = [x[1] for x in res]
+
+            df_final = df_s[df_s['In_Blank'].isin(["NO", "RT_SHIFT_DETECTED"])].copy()
+
+            total_sample = len(df_s)
+            final_count = len(df_final)
+            purity = (final_count / total_sample * 100) if total_sample > 0 else 0
+
+            summary_list.append({
+                "Sample": sample_name,
+                "Total Peaks": total_sample,
+                "Final Compounds": final_count,
+                "Purity (%)": round(purity, 2)
+            })
+
+            entry = df_final[['Hit Name', 'Area (%)']].copy()
+            entry['Sample_ID'] = sample_name
+            master_list_auto.append(entry)
+
+        # ===== OUTPUT =====
+        st.write("### 📊 Batch Summary")
+        st.dataframe(pd.DataFrame(summary_list))
+
+        combined_df = pd.concat(master_list_auto)
+        master_pivot = combined_df.pivot(index='Sample_ID', columns='Hit Name', values='Area (%)').fillna(0)
+
+        st.write("### 🧠 PCA-Ready Master Table (Auto)")
+        st.dataframe(master_pivot)
+
+        # download
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            master_pivot.to_excel(writer, sheet_name='PCA_Ready')
+
+        st.download_button("📥 Download Batch PCA Dataset", output.getvalue(), "Batch_PCA.xlsx")
+
+    except Exception as e:
+        st.error(f"Batch Error: {e}")
