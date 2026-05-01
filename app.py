@@ -49,7 +49,7 @@ def run_strict_procedure(file, q_min, area_min):
     df = df[(df['Quality'] >= q_min) & (df['Area (%)'] >= area_min)]
 
     blacklist = ['siloxane', 'phthalate', 'octaxilonaxe', 'bleed', 'plasticizer', 'adipate', 'column bleed']
-    contaminants = ['iodo', 'chloro', 'bromo', 'fluoro', 'iodide', 'chloride', 'thiophene', 'benzo', 'sulphur', 'benzothiophene', 'naphthalene', 'benzene,']
+    contaminants = ['iodo', 'chloro', 'bromo', 'fluoro', 'iodide', 'chloride', 'thiophene', 'benzo', 'benza', 'cyclo', 'sulphur', 'benzothiophene', 'naphthalene', 'benzene,']
 
     def classify_compound(name):
         n = str(name).lower()
