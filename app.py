@@ -103,9 +103,23 @@ if sample_file and blank_file:
         m1.metric("Total Sample Peaks", total_sample)
         m2.metric("Blank Matches (Purged)", excluded, delta=f"-{excluded}", delta_color="inverse")
         m3.metric("Final Unique Compounds", final_count)
-        m4.metric(label="Sample Purity Score", value=f"{purity:.1f}%")
+        
+        # --- HELP BUTTON RESTORED HERE ---
+        m4.metric(
+            label="Sample Purity Score", 
+            value=f"{purity:.1f}%",
+            help="""
+            **Halal Integrity Metrics (Area-Weight)**
+            
+            This score represents the concentration-weighted purity of the lipid profile. 
+            It filters out solvent background (blank) and non-lipid artifacts.
+                
+            **Formula:**
+            (Σ Area of Clean Lipid Peaks / Total Original Peak Area) × 100
+            """
+        )
 
-        # --- DATA ANALYSIS TABS (DASHBOARD UI STYLING RETURNED) ---
+        # --- DATA ANALYSIS TABS ---
         t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. 🧠 Expert RT Analysis"])
         
         with t1: 
@@ -140,7 +154,7 @@ if sample_file and blank_file:
 
         st.markdown("---")
         
-        # --- INDIVIDUAL EXPORT LOGIC (ALL FORMATS RESTORED) ---
+        # --- EXPORT LOGIC ---
         custom_filename = st.text_input("📁 Enter Filename for Individual Export", value="LipidExpert_Report")
         final_save_name = f"{custom_filename.strip().replace(' ', '_')}.xlsx"
 
@@ -180,15 +194,14 @@ if sample_file and blank_file:
             df_final.drop(columns=['In_Blank', 'RT_Diff']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
 
             ws_rep = writer.sheets[rs]
-            b_rt_idx, b_match_idx, b_status_idx = df_b.columns.get_loc('RT (min)'), df_b.columns.get_loc('In_Sample'), df_b.columns.get_loc('Chemical_Status')
+            b_rt_idx, b_match_idx = df_b.columns.get_loc('RT (min)'), df_b.columns.get_loc('In_Sample')
             ws_rep.conditional_format(11, 0, 11+len(df_b), len(df_b.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + b_match_idx)}12="YES"', 'format': yellow_fmt})
             ws_rep.conditional_format(11, b_rt_idx, 11+len(df_b), b_rt_idx, {'type': 'formula', 'criteria': f'=${chr(65 + b_match_idx)}12="RT_SHIFT_DETECTED"', 'format': navy_fmt})
 
-            s_rt_idx, s_match_idx, s_status_idx = df_s.columns.get_loc('RT (min)'), df_s.columns.get_loc('In_Blank'), df_s.columns.get_loc('Chemical_Status')
+            s_rt_idx, s_match_idx = df_s.columns.get_loc('RT (min)'), df_s.columns.get_loc('In_Blank')
             ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), len(df_s.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + s_match_idx)}{s2+11}="YES"', 'format': yellow_fmt})
             ws_rep.conditional_format(s2+10, s_rt_idx, s2+10+len(df_s), s_rt_idx, {'type': 'formula', 'criteria': f'=${chr(65 + s_match_idx)}{s2+11}="RT_SHIFT_DETECTED"', 'format': navy_fmt})
             
-            # Pink Format for Contaminants in Final Report
             f_status_idx = df_final.columns.get_loc('Chemical_Status')
             ws_rep.conditional_format(s3+10, f_status_idx, s3+10+len(df_final), f_status_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': pink_fmt})
 
