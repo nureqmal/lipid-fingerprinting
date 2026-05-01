@@ -4,9 +4,9 @@ import io
 
 # Setup Page Configuration
 st.set_page_config(page_title="LipidExpert: Analytical Suite", layout="wide")
-st.title("🧪 LipidExpert: Batch PCA Suite")
+st.title("🧪 LipidExpert: Analytical Suite")
 
-# --- SESSION STATE (Tetap Simpan untuk Master Table) ---
+# --- SESSION STATE (Untuk Master Table) ---
 if 'master_list' not in st.session_state:
     st.session_state.master_list = []
 
@@ -23,8 +23,9 @@ if st.sidebar.button("🗑️ Reset Master Table"):
 st.markdown(f"""
 ---
 ### Standard Operating Procedure (SOP):
-1.  **Batch Processing**: Multiple samples compared against a single Solvent Blank.
-2.  **Auto-Compile**: All processed samples automatically added to Master PCA Table.
+1.  **Metadata Preservation**: NIST headers (Rows 1–9) retained.
+2.  **Quality Gate**: NIST Quality **≥ {q_threshold}**.
+3.  **Batch PCA Mode**: Capability to process multiple samples against a single blank simultaneously.
 ---
 """)
 
@@ -57,72 +58,104 @@ def run_strict_procedure(file, q_min, area_min):
     
     return df_header, df.sort_values(by='RT (min)')
 
-# --- BATCH FILE UPLOAD SECTION ---
-st.warning("⚠️ **BATCH MODE**: Select ONE Blank file and MULTIPLE Sample files.")
+# --- FILE UPLOAD SECTION ---
+st.info("💡 **Mode Selection**: Upload one sample for full analysis, or multiple samples for Batch PCA processing.")
 
 col1, col2 = st.columns(2)
 with col1: 
-    # Perhatikan: accept_multiple_files=True
-    sample_files = st.file_uploader("Upload ALL Sample Files", type=['xlsx'], accept_multiple_files=True)
+    # Sekarang boleh upload banyak fail serentak
+    sample_files = st.file_uploader("Upload SAMPLE File(s)", type=['xlsx'], accept_multiple_files=True)
 with col2: 
-    blank_file = st.file_uploader("Upload Solvent BLANK File", type=['xlsx'])
+    blank_file = st.file_uploader("Upload BLANK File (.xlsx only)", type=['xlsx'])
 
 if sample_files and blank_file:
     try:
-        # 1. Run Blank sekali je
+        # Run Blank sekali sahaja untuk semua perbandingan
         h_b, df_b = run_strict_procedure(blank_file, q_threshold, area_threshold)
-        
-        # Simpan result batch dalam list sementara
-        batch_results = []
 
-        # 2. Loop setiap sample yang diupload
-        for s_file in sample_files:
+        # EXPERT RT SHIFT LOGIC (UNTOUCHED)
+        def check_match_expert(row, target_df, tol):
+            matches = target_df[target_df['Hit Name'] == row['Hit Name']]
+            if matches.empty: return "NO", None
+            for _, t_row in matches.iterrows():
+                diff = abs(row['RT (min)'] - t_row['RT (min)'])
+                if diff <= tol: return "YES", diff 
+            closest_diff = matches.apply(lambda r: abs(row['RT (min)'] - r['RT (min)']), axis=1).min()
+            return "RT_SHIFT_DETECTED", closest_diff
+
+        # Jika hanya ada SATU file (Single Analysis Mode)
+        if len(sample_files) == 1:
+            s_file = sample_files[0]
             h_s, df_s = run_strict_procedure(s_file, q_threshold, area_threshold)
-
-            # --- EXPERT RT SHIFT LOGIC (UNTOUCHED) ---
-            def check_match_expert(row, target_df, tol):
-                matches = target_df[target_df['Hit Name'] == row['Hit Name']]
-                if matches.empty: return "NO", None
-                for _, t_row in matches.iterrows():
-                    diff = abs(row['RT (min)'] - t_row['RT (min)'])
-                    if diff <= tol: return "YES", diff 
-                closest_diff = matches.apply(lambda r: abs(row['RT (min)'] - r['RT (min)']), axis=1).min()
-                return "RT_SHIFT_DETECTED", closest_diff
 
             res = df_s.apply(lambda r: check_match_expert(r, df_b, rt_tolerance), axis=1)
             df_s['In_Blank'], df_s['RT_Diff'] = [x[0] for x in res], [x[1] for x in res]
             df_final = df_s[df_s['In_Blank'].isin(["NO", "RT_SHIFT_DETECTED"])].copy()
 
-            # Auto-Extract Sample Name dari metadata
-            s_name = "Unknown"
-            for row in h_s.values:
-                if "Sample Name" in str(row[0]):
-                    s_name = str(row[1]).strip()
-                    break
+            # Analisis Detail (Tab 1-4)
+            st.subheader("📊 Single Sample Detailed Analysis")
+            t1, t2, t3, t4, t5 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. 🧠 Expert RT Analysis", "🏆 5. Master PCA Table"])
             
-            # Masukkan dalam list untuk Master Table
-            master_entry = df_final[['Hit Name', 'Area (%)']].copy()
-            master_entry['Sample_ID'] = s_name
-            batch_results.append(master_entry)
+            with t1: st.dataframe(df_b)
+            with t2: st.dataframe(df_s)
+            with t3: st.dataframe(df_final.drop(columns=['In_Blank', 'RT_Diff']))
+            with t4:
+                st.write("### 🧬 RT Shift Discussion Logic")
+                # (Logic RT Shift kau kat sini...)
+                st.success("Analysis complete for single file.")
 
-        # Update Master List Global
-        if st.button("🚀 Process & Compile All to Master Table"):
-            st.session_state.master_list.extend(batch_results)
-            st.success(f"Successfully processed {len(sample_files)} samples!")
+            with t5:
+                st.write("### 🏗️ Add to Master Table")
+                s_id = st.text_input("🏷️ Sample ID", value="Sample_1")
+                if st.button("➕ Add to Master"):
+                    entry = df_final[['Hit Name', 'Area (%)']].copy()
+                    entry['Sample_ID'] = s_id
+                    st.session_state.master_list.append(entry)
+                    st.success("Added!")
 
-        # --- DISPLAY MASTER TABLE ---
+        # Jika ada BANYAK file (Batch PCA Mode)
+        else:
+            st.subheader(f"🚀 Batch Processing Mode ({len(sample_files)} files)")
+            if st.button("⚡ Process All Files for PCA"):
+                temp_master = []
+                progress_bar = st.progress(0)
+                
+                for i, s_file in enumerate(sample_files):
+                    h_s, df_s = run_strict_procedure(s_file, q_threshold, area_threshold)
+                    res = df_s.apply(lambda r: check_match_expert(r, df_b, rt_tolerance), axis=1)
+                    df_s['In_Blank'] = [x[0] for x in res]
+                    df_final_batch = df_s[df_s['In_Blank'].isin(["NO", "RT_SHIFT_DETECTED"])].copy()
+                    
+                    # Auto-extract name dari metadata h_s
+                    s_name = "Unknown"
+                    for row in h_s.values:
+                        if "Sample Name" in str(row[0]):
+                            s_name = str(row[1]).strip()
+                            break
+                    
+                    entry = df_final_batch[['Hit Name', 'Area (%)']].copy()
+                    entry['Sample_ID'] = f"{s_name}_{i}" # Tambah index sikit supaya tak clash
+                    temp_master.append(entry)
+                    progress_bar.progress((i + 1) / len(sample_files))
+                
+                st.session_state.master_list.extend(temp_master)
+                st.success("All files processed and compiled into Master Table!")
+
+            t1, t2, t3, t4, t5 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. 🧠 Expert RT Analysis", "🏆 5. Master PCA Table"])
+            with t5:
+                st.write("Check below for combined data.")
+
+        # --- GLOBAL MASTER TABLE DISPLAY ---
         if st.session_state.master_list:
-            st.subheader("🏆 Master PCA Table")
+            st.markdown("---")
+            st.write("### 🏆 Combined Master PCA Table")
             combined_df = pd.concat(st.session_state.master_list)
             master_pivot = combined_df.pivot(index='Sample_ID', columns='Hit Name', values='Area (%)').fillna(0)
-            
             st.dataframe(master_pivot)
             
-            # Export Master
             master_out = io.BytesIO()
             with pd.ExcelWriter(master_out, engine='xlsxwriter') as writer:
                 master_pivot.to_excel(writer, sheet_name='PCA_Ready')
-            
-            st.download_button("📥 Download Master Table for PCA", master_out.getvalue(), "Master_PCA_Dataset.xlsx")
+            st.download_button("📥 Download Full Master Table", master_out.getvalue(), "Master_PCA_Dataset.xlsx")
 
-    except Exception as e: st.error(f"Error processing batch: {e}")
+    except Exception as e: st.error(f"Error: {e}")
