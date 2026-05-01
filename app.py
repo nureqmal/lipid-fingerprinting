@@ -147,7 +147,7 @@ with main_tab1:
 
 with main_tab2:
     st.header("🔬 Multiple Sample Analysis (PCA Master Table)")
-    st.info("Upload satu Blank dan banyak Sample. Sistem akan menghasilkan Master Table untuk PCA.")
+    st.info("Upload ONE Blank dan multiple Sample. The system will generate a Master Table for PCA.")
     
     m_blank = st.file_uploader("1. Upload BLANK Reference", type=['xlsx'], key="multi_blank")
     m_samples = st.file_uploader("2. Upload Multiple SAMPLES", type=['xlsx'], accept_multiple_files=True, key="multi_samples")
