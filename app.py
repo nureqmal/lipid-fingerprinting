@@ -73,7 +73,7 @@ def check_match_expert(row, target_df, tol):
     return "RT_SHIFT_DETECTED", closest_diff
 
 # --- TAB SYSTEM ---
-tab1, tab2 = st.tabs(["Single File (Detail)", "Multiple Files for PCA"])
+tab1, tab2 = st.tabs(["Single File (Detail)", "Multiple Files (for PCA)"])
 
 with tab1:
     st.warning("⚠️ **IMPORTANT**: Please ensure your files are in **.xlsx** format.")
@@ -199,7 +199,7 @@ with tab1:
         except Exception as e: st.error(f"Error: {e}")
 
 with tab2:
-    st.header("🧬 Multiple Analysis for PCA")
+    st.header("Multiple Files for PCA")
     m_blank = st.file_uploader("Upload ONE Blank File", type=['xlsx'], key="m_b")
     m_samples = st.file_uploader("Upload MULTIPLE Sample Files", type=['xlsx'], accept_multiple_files=True, key="m_s")
 
