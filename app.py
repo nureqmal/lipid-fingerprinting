@@ -1,10 +1,38 @@
 import streamlit as st
 import pandas as pd
 import io
+import json
+import os
 
 # Setup Page Configuration
 st.set_page_config(page_title="Lipid EQ", layout="wide")
 st.title("Lipid EQ- Sorting & Cleaning")
+
+# --- BLACKLIST CONFIG FILE (persistent storage) ---
+BLACKLIST_CONFIG_FILE = "blacklist_config.json"
+
+DEFAULT_BLACKLIST = ['siloxane', 'phthalate', 'octaxilonaxe', 'bleed', 'plasticizer', 'adipate', 'column bleed']
+CONTAMINANTS = ['iodo', 'chloro', 'bromo', 'fluoro', 'iodide', 'chloride', 'thiophene', 'benzo', 'benza', 'cyclo', 'sulphur', 'benzothiophene', 'naphthalene', 'benzene,']
+
+def load_blacklist():
+    """Load blacklist from JSON file. Falls back to default if file missing or corrupted."""
+    if os.path.exists(BLACKLIST_CONFIG_FILE):
+        try:
+            with open(BLACKLIST_CONFIG_FILE, 'r') as f:
+                data = json.load(f)
+                return data.get('blacklist', DEFAULT_BLACKLIST)
+        except Exception:
+            pass
+    return DEFAULT_BLACKLIST.copy()
+
+def save_blacklist(blacklist):
+    """Save blacklist to JSON file."""
+    with open(BLACKLIST_CONFIG_FILE, 'w') as f:
+        json.dump({'blacklist': blacklist}, f, indent=2)
+
+# Load blacklist into session state on first run
+if 'blacklist' not in st.session_state:
+    st.session_state.blacklist = load_blacklist()
 
 # --- SIDEBAR CONTROL ---
 st.sidebar.header("⚙️ Analytical Controls")
@@ -24,6 +52,49 @@ area_threshold = st.sidebar.slider(
     help="**Baseline Cut-off:** Removes small peaks/noise (Default: 0.00)."
 )
 
+# --- SIDEBAR: BLACKLIST MANAGER ---
+st.sidebar.markdown("---")
+st.sidebar.header("🚫 Blacklist Manager")
+st.sidebar.caption("Keywords saved here persist across sessions. Any compound whose name contains a keyword will be excluded.")
+
+# Display current blacklist with remove buttons
+st.sidebar.markdown("**Current Blacklist Keywords:**")
+for kw in st.session_state.blacklist:
+    col_kw, col_btn = st.sidebar.columns([3, 1])
+    col_kw.markdown(f"`{kw}`")
+    if col_btn.button("✕", key=f"remove_{kw}", help=f"Remove '{kw}'"):
+        st.session_state.blacklist.remove(kw)
+        save_blacklist(st.session_state.blacklist)
+        st.rerun()
+
+# Add new keyword
+st.sidebar.markdown("**Add New Keyword:**")
+new_kw = st.sidebar.text_input(
+    "Type keyword to blacklist",
+    placeholder="e.g. trimethylsilyl",
+    key="new_kw_input",
+    label_visibility="collapsed"
+)
+if st.sidebar.button("➕ Add to Blacklist", use_container_width=True):
+    cleaned = new_kw.strip().lower()
+    if cleaned == "":
+        st.sidebar.warning("Please enter a keyword first.")
+    elif cleaned in st.session_state.blacklist:
+        st.sidebar.warning(f"'{cleaned}' is already in the blacklist.")
+    else:
+        st.session_state.blacklist.append(cleaned)
+        save_blacklist(st.session_state.blacklist)
+        st.sidebar.success(f"✅ '{cleaned}' added!")
+        st.rerun()
+
+# Reset to default
+st.sidebar.markdown("---")
+if st.sidebar.button("↺ Reset to Default Blacklist", use_container_width=True):
+    st.session_state.blacklist = DEFAULT_BLACKLIST.copy()
+    save_blacklist(st.session_state.blacklist)
+    st.rerun()
+
+# --- SOP ---
 st.markdown(f"""
 ---
 ### Standard Operating Procedure (SOP):
@@ -31,26 +102,24 @@ st.markdown(f"""
 2.  **Quality Gate**: Filtering peaks with NIST Quality **≥ {q_threshold}**.
 3.  **Noise Reduction**: Removing baseline peaks with Area **< {area_threshold:.2f}%**.
 4.  **RT-Aware Matching**: Matching compounds using Name + RT Tolerance (**±{rt_tolerance} min**).
+5.  **Blacklist Filter**: Excluding compounds matching any of the **{len(st.session_state.blacklist)} active blacklist keyword(s)**.
 ---
 """)
 
-# --- BLACKLIST & CONTAMINANTS (shared reference) ---
-BLACKLIST = ['siloxane', 'phthalate', 'octaxilonaxe', 'bleed', 'plasticizer', 'adipate', 'column bleed']
-CONTAMINANTS = ['iodo', 'chloro', 'bromo', 'fluoro', 'iodide', 'chloride', 'thiophene', 'benzo', 'benza', 'cyclo', 'sulphur', 'benzothiophene', 'naphthalene', 'benzene,']
-
+# --- COMPOUND CLASSIFICATION (uses live session blacklist) ---
 def classify_compound(name):
     n = str(name).lower()
-    if any(x in n for x in BLACKLIST): return "Discard (Artifact)"
+    if any(x in n for x in st.session_state.blacklist): return "Discard (Artifact)"
     if any(x in n for x in CONTAMINANTS): return "Review (Potential Contaminant)"
     return "Clean (Lipid/Oxidation)"
 
 def get_matched_keywords(name):
-    """Return which blacklist keyword(s) triggered the exclusion — so user knows WHY compound was excluded."""
+    """Return which blacklist keyword(s) triggered the exclusion."""
     n = str(name).lower()
-    matched = [kw for kw in BLACKLIST if kw in n]
+    matched = [kw for kw in st.session_state.blacklist if kw in n]
     return ', '.join(matched) if matched else ''
 
-# --- CODE EMAS (UPDATED - returns excluded compounds too) ---
+# --- CODE EMAS (UNTOUCHED LOGIC - SHARED) ---
 def run_strict_procedure(file, q_min, area_min):
     df_full_raw = pd.read_excel(file, sheet_name='LibRes', header=None)
     df_header = df_full_raw.iloc[0:9, :].copy()
@@ -66,12 +135,10 @@ def run_strict_procedure(file, q_min, area_min):
     # Apply quality + area filter first (same as original)
     df = df[(df['Quality'] >= q_min) & (df['Area (%)'] >= area_min)]
 
-    # Classify all compounds
+    # Classify all compounds using live blacklist
     df['Chemical_Status'] = df['Hit Name'].apply(classify_compound)
 
-    # --- CAPTURE EXCLUDED (BLACKLIST) after quality filter, before dropping ---
-    # df_excluded retains FULL compound names (e.g. "Octasiloxane, hexadecamethyl-")
-    # plus a helper column showing which keyword triggered the exclusion
+    # Capture excluded (blacklist) compounds — full names + matched keyword
     df_excluded = df[df['Chemical_Status'] == "Discard (Artifact)"].copy()
     df_excluded['Matched Keyword'] = df_excluded['Hit Name'].apply(get_matched_keywords)
     df_excluded = df_excluded.sort_values(by='Area (Ab*s)', ascending=False).drop_duplicates(subset=['Hit Name'], keep='first')
@@ -179,11 +246,15 @@ with tab1:
             # --- TAB 5: EXCLUDED BLACKLIST COMPOUNDS ---
             with t5:
                 st.markdown("### ⛔ Excluded Compounds (Blacklist Artifacts)")
+
+                # Show active blacklist keywords for reference
+                st.markdown("**Active Blacklist Keywords** *(manage in sidebar)*:")
+                st.code(', '.join(st.session_state.blacklist), language=None)
+
                 st.info(
                     "Compounds below were **originally detected in the raw data** but excluded because their "
                     "full compound name contains a blacklisted keyword. "
-                    "For example, **'Octasiloxane, hexadecamethyl-'** is excluded because its name contains **'siloxane'** — "
-                    "a known GC column bleed artifact family. "
+                    "For example, **'Octasiloxane, hexadecamethyl-'** is excluded because its name contains **'siloxane'**. "
                     "The **'Matched Keyword'** column tells you exactly which keyword triggered each exclusion."
                 )
 
@@ -194,7 +265,7 @@ with tab1:
                     def highlight_excluded_s(row):
                         return ['background-color: #FFD7D7' for _ in row.index]
                     st.dataframe(df_s_excluded.style.apply(highlight_excluded_s, axis=1), use_container_width=True)
-                    st.caption(f"🔴 {len(df_s_excluded)} compound(s) excluded from Sample. Full compound names shown above — 'Matched Keyword' column shows why each was excluded.")
+                    st.caption(f"🔴 {len(df_s_excluded)} compound(s) excluded from Sample.")
 
                 st.markdown("---")
                 st.markdown("#### Blank — Excluded Compounds")
@@ -204,7 +275,7 @@ with tab1:
                     def highlight_excluded_b(row):
                         return ['background-color: #FFD7D7' for _ in row.index]
                     st.dataframe(df_b_excluded.style.apply(highlight_excluded_b, axis=1), use_container_width=True)
-                    st.caption(f"🔴 {len(df_b_excluded)} compound(s) excluded from Blank. Full compound names shown above — 'Matched Keyword' column shows why each was excluded.")
+                    st.caption(f"🔴 {len(df_b_excluded)} compound(s) excluded from Blank.")
 
             st.markdown("---")
             custom_filename = st.text_input("📁 Rename your file before download", value="eg. SF-HEX-1", key="rename_s")
@@ -233,6 +304,7 @@ with tab1:
                     ('Area Threshold', area_threshold),
                     ('Final Biomarkers', final_count),
                     ('Purity Score', f"{purity:.2f}%"),
+                    ('Active Blacklist Keywords', len(st.session_state.blacklist)),
                     ('Blacklist Excluded (Sample)', len(df_s_excluded)),
                     ('Blacklist Excluded (Blank)', len(df_b_excluded)),
                 ]
@@ -240,11 +312,16 @@ with tab1:
                     ws_dash.write(f'B{i}', l, label_fmt)
                     ws_dash.write(f'C{i}', v, val_fmt)
 
-                ws_dash.write('B12', 'COLOR LEGEND / GUIDELINE:', wb.add_format({'bold': True, 'underline': True}))
-                ws_dash.write('B13', 'Yellow Row', yellow_fmt); ws_dash.write('C13', 'Matched in Blank/Sample (Shared Compound)')
-                ws_dash.write('B14', 'Blue RT Cell', navy_fmt); ws_dash.write('C14', 'RT Shift Detected (Retained)')
-                ws_dash.write('B15', 'Pink Cell', pink_fmt); ws_dash.write('C15', 'Potential contaminant/Unique compound')
-                ws_dash.write('B16', 'Red Row', red_fmt); ws_dash.write('C16', 'Excluded Blacklist Artifact (Originally in Raw Data — full name preserved)')
+                # Write active blacklist keywords used in this run
+                ws_dash.write(f'B{4+len(metrics_list)+1}', 'Blacklist Keywords Used:', wb.add_format({'bold': True, 'underline': True}))
+                ws_dash.write(f'C{4+len(metrics_list)+1}', ', '.join(st.session_state.blacklist), wb.add_format({'border': 1, 'text_wrap': True}))
+                ws_dash.set_row(4+len(metrics_list), 30)
+
+                ws_dash.write('B15', 'COLOR LEGEND / GUIDELINE:', wb.add_format({'bold': True, 'underline': True}))
+                ws_dash.write('B16', 'Yellow Row', yellow_fmt); ws_dash.write('C16', 'Matched in Blank/Sample (Shared Compound)')
+                ws_dash.write('B17', 'Blue RT Cell', navy_fmt); ws_dash.write('C17', 'RT Shift Detected (Retained)')
+                ws_dash.write('B18', 'Pink Cell', pink_fmt); ws_dash.write('C18', 'Potential contaminant/Unique compound')
+                ws_dash.write('B19', 'Red Row', red_fmt); ws_dash.write('C19', 'Excluded Blacklist Artifact (Originally in Raw Data — full name preserved)')
                 ws_dash.set_column('B:B', 30)
                 ws_dash.set_column('C:C', 85)
 
@@ -273,10 +350,8 @@ with tab1:
                 f_status_idx = df_final.columns.get_loc('Chemical_Status')
                 ws_rep.conditional_format(s3+10, f_status_idx, s3+10+len(df_final), f_status_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': pink_fmt})
 
-                # --- NEW SHEET: EXCLUDED COMPOUNDS (full compound names + matched keyword) ---
+                # --- EXCLUDED COMPOUNDS SHEET ---
                 ws_excl = wb.add_worksheet('Excluded_Compounds')
-
-                # Figure out column span for merge
                 max_cols = max(
                     len(df_s_excluded.columns) if not df_s_excluded.empty else 6,
                     len(df_b_excluded.columns) if not df_b_excluded.empty else 6
@@ -285,14 +360,12 @@ with tab1:
 
                 ws_excl.merge_range(f'A1:{last_col_letter}1', '⛔ EXCLUDED BLACKLIST COMPOUNDS — Originally Present in Raw Data', red_hdr_fmt)
                 ws_excl.merge_range(f'A2:{last_col_letter}2',
-                    'NOTE: These compounds passed the quality filter but were removed because their full compound name '
-                    'contains a blacklisted keyword (e.g. "Octasiloxane, hexadecamethyl-" excluded via keyword "siloxane"). '
-                    'Full compound names and all metadata are preserved here for traceability. '
-                    'See "Matched Keyword" column to understand why each compound was excluded.',
+                    f'NOTE: Compounds removed because their full name contains a blacklisted keyword. '
+                    f'Active keywords used in this run: {", ".join(st.session_state.blacklist)}. '
+                    f'See "Matched Keyword" column for per-compound reason.',
                     note_fmt)
-                ws_excl.set_row(1, 50)
+                ws_excl.set_row(1, 45)
 
-                # SAMPLE excluded table
                 ws_excl.merge_range(f'A4:{last_col_letter}4', 'SAMPLE — Excluded Blacklist Compounds', red_sub_fmt)
                 if not df_s_excluded.empty:
                     for col_idx, col_name in enumerate(df_s_excluded.columns):
@@ -305,7 +378,6 @@ with tab1:
                     ws_excl.write(4, 0, 'No blacklisted compounds found in Sample.', wb.add_format({'italic': True, 'font_color': '#666666'}))
                     s_excl_end = 6
 
-                # BLANK excluded table
                 blank_start = s_excl_end + 2
                 ws_excl.merge_range(f'A{blank_start}:{last_col_letter}{blank_start}', 'BLANK — Excluded Blacklist Compounds', red_sub_fmt)
                 if not df_b_excluded.empty:
