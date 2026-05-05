@@ -34,6 +34,22 @@ st.markdown(f"""
 ---
 """)
 
+# --- BLACKLIST & CONTAMINANTS (shared reference) ---
+BLACKLIST = ['siloxane', 'phthalate', 'octaxilonaxe', 'bleed', 'plasticizer', 'adipate', 'column bleed']
+CONTAMINANTS = ['iodo', 'chloro', 'bromo', 'fluoro', 'iodide', 'chloride', 'thiophene', 'benzo', 'benza', 'cyclo', 'sulphur', 'benzothiophene', 'naphthalene', 'benzene,']
+
+def classify_compound(name):
+    n = str(name).lower()
+    if any(x in n for x in BLACKLIST): return "Discard (Artifact)"
+    if any(x in n for x in CONTAMINANTS): return "Review (Potential Contaminant)"
+    return "Clean (Lipid/Oxidation)"
+
+def get_matched_keywords(name):
+    """Return which blacklist keyword(s) triggered the exclusion — so user knows WHY compound was excluded."""
+    n = str(name).lower()
+    matched = [kw for kw in BLACKLIST if kw in n]
+    return ', '.join(matched) if matched else ''
+
 # --- CODE EMAS (UPDATED - returns excluded compounds too) ---
 def run_strict_procedure(file, q_min, area_min):
     df_full_raw = pd.read_excel(file, sheet_name='LibRes', header=None)
@@ -46,24 +62,22 @@ def run_strict_procedure(file, q_min, area_min):
 
     total_area = df['Area (Ab*s)'].sum()
     df['Area (%)'] = (df['Area (Ab*s)'] / total_area) * 100
+
+    # Apply quality + area filter first (same as original)
     df = df[(df['Quality'] >= q_min) & (df['Area (%)'] >= area_min)]
 
-    blacklist = ['siloxane', 'phthalate', 'octaxilonaxe', 'bleed', 'plasticizer', 'adipate', 'column bleed']
-    contaminants = ['iodo', 'chloro', 'bromo', 'fluoro', 'iodide', 'chloride', 'thiophene', 'benzo', 'benza', 'cyclo', 'sulphur', 'benzothiophene', 'naphthalene', 'benzene,']
-
-    def classify_compound(name):
-        n = str(name).lower()
-        if any(x in n for x in blacklist): return "Discard (Artifact)"
-        if any(x in n for x in contaminants): return "Review (Potential Contaminant)"
-        return "Clean (Lipid/Oxidation)"
-
+    # Classify all compounds
     df['Chemical_Status'] = df['Hit Name'].apply(classify_compound)
 
-    # --- EXTRACT EXCLUDED (BLACKLIST) BEFORE DROPPING ---
+    # --- CAPTURE EXCLUDED (BLACKLIST) after quality filter, before dropping ---
+    # df_excluded retains FULL compound names (e.g. "Octasiloxane, hexadecamethyl-")
+    # plus a helper column showing which keyword triggered the exclusion
     df_excluded = df[df['Chemical_Status'] == "Discard (Artifact)"].copy()
+    df_excluded['Matched Keyword'] = df_excluded['Hit Name'].apply(get_matched_keywords)
     df_excluded = df_excluded.sort_values(by='Area (Ab*s)', ascending=False).drop_duplicates(subset=['Hit Name'], keep='first')
     df_excluded = df_excluded.sort_values(by='RT (min)')
 
+    # Remove blacklist compounds (original logic preserved — untouched)
     df = df[df['Chemical_Status'] != "Discard (Artifact)"]
     df = df.sort_values(by='Area (Ab*s)', ascending=False).drop_duplicates(subset=['Hit Name'], keep='first')
 
@@ -91,7 +105,6 @@ with tab1:
 
     if sample_file and blank_file:
         try:
-            # Re-executing exact GOLD steps (now also returns excluded)
             h_s, df_s, df_s_excluded = run_strict_procedure(sample_file, q_threshold, area_threshold)
             h_b, df_b, df_b_excluded = run_strict_procedure(blank_file, q_threshold, area_threshold)
 
@@ -103,7 +116,9 @@ with tab1:
             df_b['In_Sample'] = [x[0] for x in res_b]
 
             df_final = df_s[df_s['In_Blank'].isin(["NO", "RT_SHIFT_DETECTED"])].copy()
-            total_sample, excluded, final_count = len(df_s), len(df_s[df_s['In_Blank'] == "YES"]), len(df_final)
+            total_sample = len(df_s)
+            excluded = len(df_s[df_s['In_Blank'] == "YES"])
+            final_count = len(df_final)
             purity = (final_count / total_sample * 100) if total_sample > 0 else 0
 
             st.subheader("Summary Metrics")
@@ -116,10 +131,10 @@ with tab1:
                 value=f"{purity:.1f}%",
                 help="""
             **Halal Integrity Metrics (Area-Weight)**
-            
-            This score represents the concentration-weighted purity of the lipid profile. 
+
+            This score represents the concentration-weighted purity of the lipid profile.
             It filters out solvent background (blank) and non-lipid artifacts.
-                
+
             Formula:
             (Σ Area of Clean Lipid Peaks / Total Original Peak Area) × 100
             """
@@ -131,7 +146,8 @@ with tab1:
             with t1:
                 def highlight_blank(row):
                     styles = ['' for _ in row.index]
-                    if row['In_Sample'] == "YES": styles = ['background-color: #FFEB9C' for _ in row.index]
+                    if row['In_Sample'] == "YES":
+                        styles = ['background-color: #FFEB9C' for _ in row.index]
                     elif row['In_Sample'] == "RT_SHIFT_DETECTED":
                         rt_idx = row.index.get_loc('RT (min)')
                         styles[rt_idx] = 'background-color: #002060; color: white'
@@ -141,7 +157,8 @@ with tab1:
             with t2:
                 def highlight_sample(row):
                     styles = ['' for _ in row.index]
-                    if row['In_Blank'] == "YES": styles = ['background-color: #FFEB9C' for _ in row.index]
+                    if row['In_Blank'] == "YES":
+                        styles = ['background-color: #FFEB9C' for _ in row.index]
                     elif row['In_Blank'] == "RT_SHIFT_DETECTED":
                         rt_idx = row.index.get_loc('RT (min)')
                         styles[rt_idx] = 'background-color: #002060; color: white'
@@ -159,47 +176,35 @@ with tab1:
                 else:
                     st.success("No significant RT shifts detected.")
 
-            # --- NEW TAB 5: EXCLUDED BLACKLIST COMPOUNDS ---
+            # --- TAB 5: EXCLUDED BLACKLIST COMPOUNDS ---
             with t5:
                 st.markdown("### ⛔ Excluded Compounds (Blacklist Artifacts)")
                 st.info(
-                    "These compounds were present in the **original raw data** but were automatically excluded "
-                    "because they matched known artifact/contaminant keywords (e.g. siloxane, phthalate, column bleed). "
-                    "They are shown here for full transparency and traceability."
+                    "Compounds below were **originally detected in the raw data** but excluded because their "
+                    "full compound name contains a blacklisted keyword. "
+                    "For example, **'Octasiloxane, hexadecamethyl-'** is excluded because its name contains **'siloxane'** — "
+                    "a known GC column bleed artifact family. "
+                    "The **'Matched Keyword'** column tells you exactly which keyword triggered each exclusion."
                 )
 
-                col_ex1, col_ex2 = st.columns(2)
+                st.markdown("#### Sample — Excluded Compounds")
+                if df_s_excluded.empty:
+                    st.success("No blacklisted compounds found in Sample.")
+                else:
+                    def highlight_excluded_s(row):
+                        return ['background-color: #FFD7D7' for _ in row.index]
+                    st.dataframe(df_s_excluded.style.apply(highlight_excluded_s, axis=1), use_container_width=True)
+                    st.caption(f"🔴 {len(df_s_excluded)} compound(s) excluded from Sample. Full compound names shown above — 'Matched Keyword' column shows why each was excluded.")
 
-                with col_ex1:
-                    st.markdown("#### Sample — Excluded Compounds")
-                    if df_s_excluded.empty:
-                        st.success("No blacklisted compounds found in Sample.")
-                    else:
-                        def highlight_excluded(row):
-                            return ['background-color: #FFD7D7' for _ in row.index]
-                        st.dataframe(df_s_excluded.style.apply(highlight_excluded, axis=1), use_container_width=True)
-                        st.caption(f"🔴 {len(df_s_excluded)} compound(s) excluded from Sample")
-
-                with col_ex2:
-                    st.markdown("#### Blank — Excluded Compounds")
-                    if df_b_excluded.empty:
-                        st.success("No blacklisted compounds found in Blank.")
-                    else:
-                        def highlight_excluded_b(row):
-                            return ['background-color: #FFD7D7' for _ in row.index]
-                        st.dataframe(df_b_excluded.style.apply(highlight_excluded_b, axis=1), use_container_width=True)
-                        st.caption(f"🔴 {len(df_b_excluded)} compound(s) excluded from Blank")
-
-                if not df_s_excluded.empty:
-                    st.markdown("---")
-                    st.markdown("#### Blacklist Keywords Matched (Sample)")
-                    blacklist_kw = ['siloxane', 'phthalate', 'octaxilonaxe', 'bleed', 'plasticizer', 'adipate', 'column bleed']
-                    summary_rows = []
-                    for _, row in df_s_excluded.iterrows():
-                        n = str(row['Hit Name']).lower()
-                        matched = [kw for kw in blacklist_kw if kw in n]
-                        summary_rows.append({'Hit Name': row['Hit Name'], 'RT (min)': row['RT (min)'], 'Area (%)': round(row['Area (%)'], 4), 'Matched Keyword': ', '.join(matched)})
-                    st.table(pd.DataFrame(summary_rows))
+                st.markdown("---")
+                st.markdown("#### Blank — Excluded Compounds")
+                if df_b_excluded.empty:
+                    st.success("No blacklisted compounds found in Blank.")
+                else:
+                    def highlight_excluded_b(row):
+                        return ['background-color: #FFD7D7' for _ in row.index]
+                    st.dataframe(df_b_excluded.style.apply(highlight_excluded_b, axis=1), use_container_width=True)
+                    st.caption(f"🔴 {len(df_b_excluded)} compound(s) excluded from Blank. Full compound names shown above — 'Matched Keyword' column shows why each was excluded.")
 
             st.markdown("---")
             custom_filename = st.text_input("📁 Rename your file before download", value="eg. SF-HEX-1", key="rename_s")
@@ -215,8 +220,11 @@ with tab1:
                 navy_fmt = wb.add_format({'bg_color': '#002060', 'font_color': 'white', 'border': 1})
                 pink_fmt = wb.add_format({'bg_color': '#FFC0CB', 'border': 1})
                 red_fmt = wb.add_format({'bg_color': '#FFD7D7', 'border': 1})
-                red_hdr_fmt = wb.add_format({'bold': True, 'font_size': 14, 'bg_color': '#C00000', 'font_color': 'white', 'border': 1, 'align': 'center'})
+                red_hdr_fmt = wb.add_format({'bold': True, 'font_size': 13, 'bg_color': '#C00000', 'font_color': 'white', 'border': 1, 'align': 'center'})
+                red_sub_fmt = wb.add_format({'bold': True, 'bg_color': '#FFD7D7', 'border': 1, 'align': 'center'})
+                note_fmt = wb.add_format({'italic': True, 'font_color': '#C00000', 'text_wrap': True})
 
+                # --- DASHBOARD SHEET ---
                 ws_dash = wb.add_worksheet('Dashboard')
                 ws_dash.merge_range('B2:E2', 'LIPID EQ ANALYTICAL SUMMARY', header_fmt)
                 metrics_list = [
@@ -236,10 +244,11 @@ with tab1:
                 ws_dash.write('B13', 'Yellow Row', yellow_fmt); ws_dash.write('C13', 'Matched in Blank/Sample (Shared Compound)')
                 ws_dash.write('B14', 'Blue RT Cell', navy_fmt); ws_dash.write('C14', 'RT Shift Detected (Retained)')
                 ws_dash.write('B15', 'Pink Cell', pink_fmt); ws_dash.write('C15', 'Potential contaminant/Unique compound')
-                ws_dash.write('B16', 'Red Row', red_fmt); ws_dash.write('C16', 'Excluded Blacklist Artifact (Originally in Raw Data)')
+                ws_dash.write('B16', 'Red Row', red_fmt); ws_dash.write('C16', 'Excluded Blacklist Artifact (Originally in Raw Data — full name preserved)')
                 ws_dash.set_column('B:B', 30)
                 ws_dash.set_column('C:C', 85)
 
+                # --- ANALYTICAL REPORT SHEET ---
                 rs = 'Analytical_Report'
                 h_b.to_excel(writer, sheet_name=rs, startrow=2, index=False, header=False)
                 df_b.to_excel(writer, sheet_name=rs, startrow=11, index=False, header=False)
@@ -253,50 +262,71 @@ with tab1:
                 df_final.drop(columns=['In_Blank', 'RT_Diff']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
 
                 ws_rep = writer.sheets[rs]
-                b_rt_idx, b_match_idx = df_b.columns.get_loc('RT (min)'), df_b.columns.get_loc('In_Sample')
-                ws_rep.conditional_format(11, 0, 11+len(df_b), len(df_b.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + b_match_idx)}12="YES"', 'format': yellow_fmt})
-                ws_rep.conditional_format(11, b_rt_idx, 11+len(df_b), b_rt_idx, {'type': 'formula', 'criteria': f'=${chr(65 + b_match_idx)}12="RT_SHIFT_DETECTED"', 'format': navy_fmt})
-                s_rt_idx, s_match_idx = df_s.columns.get_loc('RT (min)'), df_s.columns.get_loc('In_Blank')
-                ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), len(df_s.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65 + s_match_idx)}{s2+11}="YES"', 'format': yellow_fmt})
-                ws_rep.conditional_format(s2+10, s_rt_idx, s2+10+len(df_s), s_rt_idx, {'type': 'formula', 'criteria': f'=${chr(65 + s_match_idx)}{s2+11}="RT_SHIFT_DETECTED"', 'format': navy_fmt})
+                b_rt_idx = df_b.columns.get_loc('RT (min)')
+                b_match_idx = df_b.columns.get_loc('In_Sample')
+                ws_rep.conditional_format(11, 0, 11+len(df_b), len(df_b.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65+b_match_idx)}12="YES"', 'format': yellow_fmt})
+                ws_rep.conditional_format(11, b_rt_idx, 11+len(df_b), b_rt_idx, {'type': 'formula', 'criteria': f'=${chr(65+b_match_idx)}12="RT_SHIFT_DETECTED"', 'format': navy_fmt})
+                s_rt_idx = df_s.columns.get_loc('RT (min)')
+                s_match_idx = df_s.columns.get_loc('In_Blank')
+                ws_rep.conditional_format(s2+10, 0, s2+10+len(df_s), len(df_s.columns)-1, {'type': 'formula', 'criteria': f'=${chr(65+s_match_idx)}{s2+11}="YES"', 'format': yellow_fmt})
+                ws_rep.conditional_format(s2+10, s_rt_idx, s2+10+len(df_s), s_rt_idx, {'type': 'formula', 'criteria': f'=${chr(65+s_match_idx)}{s2+11}="RT_SHIFT_DETECTED"', 'format': navy_fmt})
                 f_status_idx = df_final.columns.get_loc('Chemical_Status')
                 ws_rep.conditional_format(s3+10, f_status_idx, s3+10+len(df_final), f_status_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': pink_fmt})
 
-                # --- NEW EXCEL SHEET: EXCLUDED COMPOUNDS ---
+                # --- NEW SHEET: EXCLUDED COMPOUNDS (full compound names + matched keyword) ---
                 ws_excl = wb.add_worksheet('Excluded_Compounds')
-                ws_excl.merge_range('A1:F1', '⛔ EXCLUDED BLACKLIST COMPOUNDS — Originally Present in Raw Data', red_hdr_fmt)
-                ws_excl.write('A2', 'NOTE: These compounds were detected in raw data but removed due to matching artifact/contaminant blacklist keywords.', wb.add_format({'italic': True, 'font_color': '#C00000'}))
 
-                # Sample excluded table
-                ws_excl.merge_range('A4:F4', 'SAMPLE — Excluded Compounds', wb.add_format({'bold': True, 'bg_color': '#FFD7D7', 'border': 1, 'align': 'center'}))
+                # Figure out column span for merge
+                max_cols = max(
+                    len(df_s_excluded.columns) if not df_s_excluded.empty else 6,
+                    len(df_b_excluded.columns) if not df_b_excluded.empty else 6
+                )
+                last_col_letter = chr(64 + min(max_cols, 26))
+
+                ws_excl.merge_range(f'A1:{last_col_letter}1', '⛔ EXCLUDED BLACKLIST COMPOUNDS — Originally Present in Raw Data', red_hdr_fmt)
+                ws_excl.merge_range(f'A2:{last_col_letter}2',
+                    'NOTE: These compounds passed the quality filter but were removed because their full compound name '
+                    'contains a blacklisted keyword (e.g. "Octasiloxane, hexadecamethyl-" excluded via keyword "siloxane"). '
+                    'Full compound names and all metadata are preserved here for traceability. '
+                    'See "Matched Keyword" column to understand why each compound was excluded.',
+                    note_fmt)
+                ws_excl.set_row(1, 50)
+
+                # SAMPLE excluded table
+                ws_excl.merge_range(f'A4:{last_col_letter}4', 'SAMPLE — Excluded Blacklist Compounds', red_sub_fmt)
                 if not df_s_excluded.empty:
-                    # Write headers
                     for col_idx, col_name in enumerate(df_s_excluded.columns):
                         ws_excl.write(4, col_idx, col_name, label_fmt)
                     for row_idx, (_, row) in enumerate(df_s_excluded.iterrows()):
                         for col_idx, val in enumerate(row):
                             ws_excl.write(5 + row_idx, col_idx, val, red_fmt)
-                    excl_end_row = 5 + len(df_s_excluded)
+                    s_excl_end = 5 + len(df_s_excluded)
                 else:
-                    ws_excl.write(4, 0, 'No blacklisted compounds found in Sample.', wb.add_format({'italic': True}))
-                    excl_end_row = 6
+                    ws_excl.write(4, 0, 'No blacklisted compounds found in Sample.', wb.add_format({'italic': True, 'font_color': '#666666'}))
+                    s_excl_end = 6
 
-                # Blank excluded table
-                blank_excl_start = excl_end_row + 2
-                ws_excl.merge_range(blank_excl_start, 0, blank_excl_start, 5, 'BLANK — Excluded Compounds', wb.add_format({'bold': True, 'bg_color': '#FFD7D7', 'border': 1, 'align': 'center'}))
+                # BLANK excluded table
+                blank_start = s_excl_end + 2
+                ws_excl.merge_range(f'A{blank_start}:{last_col_letter}{blank_start}', 'BLANK — Excluded Blacklist Compounds', red_sub_fmt)
                 if not df_b_excluded.empty:
                     for col_idx, col_name in enumerate(df_b_excluded.columns):
-                        ws_excl.write(blank_excl_start + 1, col_idx, col_name, label_fmt)
+                        ws_excl.write(blank_start, col_idx, col_name, label_fmt)
                     for row_idx, (_, row) in enumerate(df_b_excluded.iterrows()):
                         for col_idx, val in enumerate(row):
-                            ws_excl.write(blank_excl_start + 2 + row_idx, col_idx, val, red_fmt)
+                            ws_excl.write(blank_start + 1 + row_idx, col_idx, val, red_fmt)
                 else:
-                    ws_excl.write(blank_excl_start + 1, 0, 'No blacklisted compounds found in Blank.', wb.add_format({'italic': True}))
+                    ws_excl.write(blank_start, 0, 'No blacklisted compounds found in Blank.', wb.add_format({'italic': True, 'font_color': '#666666'}))
 
-                ws_excl.set_column('A:A', 40)
-                ws_excl.set_column('B:F', 20)
+                ws_excl.set_column('A:A', 45)
+                ws_excl.set_column('B:B', 12)
+                ws_excl.set_column('C:C', 15)
+                ws_excl.set_column('D:D', 12)
+                ws_excl.set_column('E:E', 25)
+                ws_excl.set_column('F:F', 25)
+                ws_excl.set_column('G:G', 25)
 
-            st.download_button(label=f"Download Report", data=output.getvalue(), file_name=final_save_name)
+            st.download_button(label="Download Report", data=output.getvalue(), file_name=final_save_name)
+
         except Exception as e:
             st.error(f"Error: {e}")
 
@@ -331,5 +361,6 @@ with tab2:
             with pd.ExcelWriter(pca_out, engine='xlsxwriter') as writer:
                 df_pca.to_excel(writer, sheet_name='PCA_Data', index=False)
             st.download_button("Download PCA Matrix", data=pca_out.getvalue(), file_name="PCA_Matrix_Ready.xlsx")
+
         except Exception as e:
             st.error(f"PCA Error: {e}")
