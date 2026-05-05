@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import io
 
+# 🔥 GLOBAL STORE (FOR EXCLUDED COMPOUNDS)
+EXCLUDED_STORE = {}
+
 # Setup Page Configuration
 st.set_page_config(page_title="Lipid EQ", layout="wide")
 st.title("Lipid EQ- Sorting & Cleaning")
@@ -34,7 +37,7 @@ st.markdown(f"""
 ---
 """)
 
-# --- CODE EMAS (MINIMAL ADDITION ONLY) ---
+# --- CODE EMAS (LOGIC MAINTAINED) ---
 def run_strict_procedure(file, q_min, area_min):
     df_full_raw = pd.read_excel(file, sheet_name='LibRes', header=None)
     df_header = df_full_raw.iloc[0:9, :].copy()
@@ -59,14 +62,15 @@ def run_strict_procedure(file, q_min, area_min):
 
     df['Chemical_Status'] = df['Hit Name'].apply(classify_compound)
 
-    # 🔥 ADDITION (capture excluded BEFORE removal)
-    df_excluded = df[df['Chemical_Status'] == "Discard (Artifact)"].copy()
+    # 🔥 CAPTURE EXCLUDED (SIDE STORE ONLY)
+    excluded_df = df[df['Chemical_Status'] == "Discard (Artifact)"].copy()
+    EXCLUDED_STORE[file.name] = excluded_df
 
-    # ORIGINAL LOGIC (UNCHANGED)
+    # ORIGINAL LOGIC
     df = df[df['Chemical_Status'] != "Discard (Artifact)"]
     df = df.sort_values(by='Area (Ab*s)', ascending=False).drop_duplicates(subset=['Hit Name'], keep='first')
     
-    return df_header, df.sort_values(by='RT (min)'), df_excluded.sort_values(by='RT (min)')
+    return df_header, df.sort_values(by='RT (min)')
 
 
 def check_match_expert(row, target_df, tol):
@@ -77,7 +81,6 @@ def check_match_expert(row, target_df, tol):
         if diff <= tol: return "YES", diff 
     closest_diff = matches.apply(lambda r: abs(row['RT (min)'] - r['RT (min)']), axis=1).min()
     return "RT_SHIFT_DETECTED", closest_diff
-
 
 # --- TAB SYSTEM ---
 tab1, tab2 = st.tabs(["Single File (Detail)", "Multiple Files (for PCA)"])
@@ -92,9 +95,8 @@ with tab1:
 
     if sample_file and blank_file:
         try:
-            # UPDATED CALL
-            h_s, df_s, ex_s = run_strict_procedure(sample_file, q_threshold, area_threshold)
-            h_b, df_b, ex_b = run_strict_procedure(blank_file, q_threshold, area_threshold)
+            h_s, df_s = run_strict_procedure(sample_file, q_threshold, area_threshold)
+            h_b, df_b = run_strict_procedure(blank_file, q_threshold, area_threshold)
 
             res_s = df_s.apply(lambda r: check_match_expert(r, df_b, rt_tolerance), axis=1)
             df_s['In_Blank'] = [x[0] for x in res_s]
@@ -114,10 +116,19 @@ with tab1:
             m3.metric("Final Unique Compounds", final_count)
             m4.metric(
                 label="Sample Purity Score", 
-                value=f"{purity:.1f}%"
+                value=f"{purity:.1f}%",
+                help="""
+            **Halal Integrity Metrics (Area-Weight)**
+            
+            This score represents the concentration-weighted purity of the lipid profile. 
+            It filters out solvent background (blank) and non-lipid artifacts.
+                
+            Formula:
+            (Σ Area of Clean Lipid Peaks / Total Original Peak Area) × 100
+            """
             )
 
-            # 🔥 ADD TAB (NO CHANGE to others)
+            # 🔥 ADD TAB WITHOUT TOUCHING OTHERS
             t1, t2, t3, t4, t5 = st.tabs([
                 "1. Solvent Blank",
                 "2. Sample Mapping",
@@ -127,44 +138,103 @@ with tab1:
             ])
 
             with t1:
-                st.dataframe(df_b)
+                def highlight_blank(row):
+                    styles = ['' for _ in row.index]
+                    if row['In_Sample'] == "YES": styles = ['background-color: #FFEB9C' for _ in row.index]
+                    elif row['In_Sample'] == "RT_SHIFT_DETECTED":
+                        rt_idx = row.index.get_loc('RT (min)')
+                        styles[rt_idx] = 'background-color: #002060; color: white'
+                    return styles
+                st.dataframe(df_b.style.apply(highlight_blank, axis=1))
             
             with t2:
-                st.dataframe(df_s)
+                def highlight_sample(row):
+                    styles = ['' for _ in row.index]
+                    if row['In_Blank'] == "YES": styles = ['background-color: #FFEB9C' for _ in row.index]
+                    elif row['In_Blank'] == "RT_SHIFT_DETECTED":
+                        rt_idx = row.index.get_loc('RT (min)')
+                        styles[rt_idx] = 'background-color: #002060; color: white'
+                    return styles
+                st.dataframe(df_s.style.apply(highlight_sample, axis=1))
             
-            with t3:
-                st.dataframe(df_final.drop(columns=['In_Blank', 'RT_Diff']))
-            
+            with t3: st.dataframe(df_final.drop(columns=['In_Blank', 'RT_Diff']))
             with t4:
                 rt_issues = df_s[df_s['In_Blank'] == "RT_SHIFT_DETECTED"]
-                st.dataframe(rt_issues)
+                if not rt_issues.empty:
+                    st.info(f"Found **{len(rt_issues)}** compounds with significant RT shifts (>0.2). The compounds are retained.")
+                    st.table(rt_issues[['Hit Name', 'RT (min)', 'RT_Diff']])
+                else: st.success("No significant RT shifts detected.")
 
             # 🔥 NEW TAB CONTENT
             with t5:
-                st.warning("These compounds were excluded based on artifact blacklist.")
-                st.subheader("Sample Excluded Compounds")
-                st.dataframe(ex_s)
+                st.warning("⚠️ These compounds were removed based on artifact blacklist rules.")
+                st.subheader("Sample Excluded")
+                st.dataframe(EXCLUDED_STORE.get(sample_file.name, pd.DataFrame()))
+                st.subheader("Blank Excluded")
+                st.dataframe(EXCLUDED_STORE.get(blank_file.name, pd.DataFrame()))
 
-                st.subheader("Blank Excluded Compounds")
-                st.dataframe(ex_b)
+            st.markdown("---")
+            custom_filename = st.text_input("📁 Rename your file before download", value="eg. SF-HEX-1", key="rename_s")
+            final_save_name = f"{custom_filename.strip().replace(' ', '_')}.xlsx"
 
-            # --- EXPORT (ONLY ADD NEW SHEETS) ---
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                wb = writer.book
+                header_fmt = wb.add_format({'bold': True, 'font_size': 16, 'bg_color': '#2E75B6', 'font_color': 'white', 'border': 1, 'align': 'center'})
+                label_fmt = wb.add_format({'bold': True, 'bg_color': '#D9E1F2', 'border': 1})
+                val_fmt = wb.add_format({'border': 1, 'align': 'center'})
+                yellow_fmt = wb.add_format({'bg_color': '#FFEB9C', 'border': 1})
+                navy_fmt = wb.add_format({'bg_color': '#002060', 'font_color': 'white', 'border': 1})
+                pink_fmt = wb.add_format({'bg_color': '#FFC0CB', 'border': 1})
+                red_fmt = wb.add_format({'bg_color': '#FF0000', 'font_color': 'white', 'border': 1})
 
-                # ORIGINAL SHEETS (UNCHANGED STRUCTURE)
-                df_b.to_excel(writer, sheet_name='Blank', index=False)
-                df_s.to_excel(writer, sheet_name='Sample', index=False)
-                df_final.to_excel(writer, sheet_name='Final', index=False)
+                ws_dash = wb.add_worksheet('Dashboard')
+                ws_dash.merge_range('B2:E2', 'LIPID EQ ANALYTICAL SUMMARY', header_fmt)
+                metrics_list = [('Quality Threshold', q_threshold), ('RT Tolerance', rt_tolerance), ('Area Threshold', area_threshold), ('Final Biomarkers', final_count), ('Purity Score', f"{purity:.2f}%")]
+                for i, (l, v) in enumerate(metrics_list, start=4):
+                    ws_dash.write(f'B{i}', l, label_fmt); ws_dash.write(f'C{i}', v, val_fmt)
+                
+                ws_dash.write('B10', 'COLOR LEGEND / GUIDELINE:', wb.add_format({'bold': True, 'underline': True}))
+                ws_dash.write('B11', 'Yellow Row', yellow_fmt); ws_dash.write('C11', 'Matched in Blank/Sample (Shared Compound)')
+                ws_dash.write('B12', 'Blue RT Cell', navy_fmt); ws_dash.write('C12', 'RT Shift Detected (Retained)')
+                ws_dash.write('B13', 'Pink Cell', pink_fmt); ws_dash.write('C13', 'Potential contaminant/Unique compound')
+                ws_dash.set_column('B:B', 30); ws_dash.set_column('C:C', 85)
 
-                # 🔥 NEW SHEETS
-                ex_s.to_excel(writer, sheet_name='Excluded_Sample', index=False)
-                ex_b.to_excel(writer, sheet_name='Excluded_Blank', index=False)
+                rs = 'Analytical_Report'
+                h_b.to_excel(writer, sheet_name=rs, startrow=2, index=False, header=False)
+                df_b.to_excel(writer, sheet_name=rs, startrow=11, index=False, header=False)
+                s2 = len(df_b) + 16
+                h_s.to_excel(writer, sheet_name=rs, startrow=s2+1, index=False, header=False)
+                df_s.to_excel(writer, sheet_name=rs, startrow=s2+10, index=False, header=False)
+                s3 = s2 + len(df_s) + 15
+                fh = h_s.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (Clean Version ✅)"
+                fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
+                df_final.drop(columns=['In_Blank', 'RT_Diff']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
 
-            st.download_button(label="Download Report", data=output.getvalue(), file_name="LipidEQ_Report.xlsx")
+                # 🔥 EXCLUDED SECTION (AUDIT STYLE)
+                s4 = s3 + len(df_final) + 15
+                eh = h_s.copy(); eh.iloc[0,0] = f"{eh.iloc[0,0]} (Excluded Artifacts 🚫)"
+                eh.to_excel(writer, sheet_name=rs, startrow=s4+1, index=False, header=False)
 
-        except Exception as e:
-            st.error(f"Error: {e}")
+                ex_s = EXCLUDED_STORE.get(sample_file.name, pd.DataFrame())
+                ex_b = EXCLUDED_STORE.get(blank_file.name, pd.DataFrame())
+                ex_combined = pd.concat([ex_s.assign(Source="Sample"), ex_b.assign(Source="Blank")])
+                ex_combined.to_excel(writer, sheet_name=rs, startrow=s4+10, index=False, header=False)
+
+                ws_rep = writer.sheets[rs]
+                if not ex_combined.empty:
+                    ex_status_idx = ex_combined.columns.get_loc('Chemical_Status')
+                    ws_rep.conditional_format(
+                        s4+10,
+                        ex_status_idx,
+                        s4+10+len(ex_combined),
+                        ex_status_idx,
+                        {'type': 'cell', 'criteria': 'equal to', 'value': '"Discard (Artifact)"', 'format': red_fmt}
+                    )
+
+            st.download_button(label=f"Download Report", data=output.getvalue(), file_name=final_save_name)
+
+        except Exception as e: st.error(f"Error: {e}")
 
 with tab2:
     st.header("Multiple Files for PCA")
@@ -173,12 +243,12 @@ with tab2:
 
     if m_blank and m_samples:
         try:
-            _, df_b_multi, _ = run_strict_procedure(m_blank, q_threshold, area_threshold)
+            _, df_b_multi = run_strict_procedure(m_blank, q_threshold, area_threshold)
             pca_list = []
             all_compounds = set()
 
             for s_f in m_samples:
-                _, df_s_raw, _ = run_strict_procedure(s_f, q_threshold, area_threshold)
+                _, df_s_raw = run_strict_procedure(s_f, q_threshold, area_threshold)
                 res = df_s_raw.apply(lambda r: check_match_expert(r, df_b_multi, rt_tolerance), axis=1)
                 df_clean = df_s_raw[res.apply(lambda x: x[0] in ["NO", "RT_SHIFT_DETECTED"])].copy()
                 
@@ -190,13 +260,11 @@ with tab2:
             df_pca = pd.DataFrame(pca_list)
             cols = ['Sample Name'] + sorted(list(all_compounds))
             df_pca = df_pca.reindex(columns=cols).fillna(0)
+            st.subheader("Ready for PCA Table (Raw Absorbance)")
             st.dataframe(df_pca)
             
             pca_out = io.BytesIO()
             with pd.ExcelWriter(pca_out, engine='xlsxwriter') as writer:
                 df_pca.to_excel(writer, sheet_name='PCA_Data', index=False)
-
             st.download_button("Download PCA Matrix", data=pca_out.getvalue(), file_name="PCA_Matrix_Ready.xlsx")
-
-        except Exception as e:
-            st.error(f"PCA Error: {e}")
+        except Exception as e: st.error(f"PCA Error: {e}")
