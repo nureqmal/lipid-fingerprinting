@@ -4,7 +4,7 @@ import io
 import json
 import os
 
-st.set_page_config(page_title="Lipid EQ", layout="wide", page_icon="⚗️")
+st.set_page_config(page_title="Lipid EQ", layout="wide", page_icon="⚗️",  initial_sidebar_state="expanded" )
 
 # ─── BLACKLIST PERSISTENCE ───────────────────────────────────────────────────
 BLACKLIST_CONFIG_FILE = "blacklist_config.json"
