@@ -34,16 +34,16 @@ st.markdown(f"""
 ---
 """)
 
-# --- CODE EMAS (UNTOUCHED LOGIC - SHARED) ---
+# --- CODE EMAS (UPDATED - returns excluded compounds too) ---
 def run_strict_procedure(file, q_min, area_min):
     df_full_raw = pd.read_excel(file, sheet_name='LibRes', header=None)
     df_header = df_full_raw.iloc[0:9, :].copy()
     df = pd.read_excel(file, sheet_name='LibRes', header=8)
-    df.columns = df.columns.str.strip() 
+    df.columns = df.columns.str.strip()
 
     df = df.dropna(subset=['RT (min)', 'Area (Ab*s)']).copy()
     df['Quality'] = pd.to_numeric(df['Quality'], errors='coerce')
-    
+
     total_area = df['Area (Ab*s)'].sum()
     df['Area (%)'] = (df['Area (Ab*s)'] / total_area) * 100
     df = df[(df['Quality'] >= q_min) & (df['Area (%)'] >= area_min)]
@@ -58,17 +58,23 @@ def run_strict_procedure(file, q_min, area_min):
         return "Clean (Lipid/Oxidation)"
 
     df['Chemical_Status'] = df['Hit Name'].apply(classify_compound)
+
+    # --- EXTRACT EXCLUDED (BLACKLIST) BEFORE DROPPING ---
+    df_excluded = df[df['Chemical_Status'] == "Discard (Artifact)"].copy()
+    df_excluded = df_excluded.sort_values(by='Area (Ab*s)', ascending=False).drop_duplicates(subset=['Hit Name'], keep='first')
+    df_excluded = df_excluded.sort_values(by='RT (min)')
+
     df = df[df['Chemical_Status'] != "Discard (Artifact)"]
     df = df.sort_values(by='Area (Ab*s)', ascending=False).drop_duplicates(subset=['Hit Name'], keep='first')
-    
-    return df_header, df.sort_values(by='RT (min)')
+
+    return df_header, df.sort_values(by='RT (min)'), df_excluded
 
 def check_match_expert(row, target_df, tol):
     matches = target_df[target_df['Hit Name'] == row['Hit Name']]
     if matches.empty: return "NO", None
     for _, t_row in matches.iterrows():
         diff = abs(row['RT (min)'] - t_row['RT (min)'])
-        if diff <= tol: return "YES", diff 
+        if diff <= tol: return "YES", diff
     closest_diff = matches.apply(lambda r: abs(row['RT (min)'] - r['RT (min)']), axis=1).min()
     return "RT_SHIFT_DETECTED", closest_diff
 
@@ -78,16 +84,16 @@ tab1, tab2 = st.tabs(["Single File (Detail)", "Multiple Files (for PCA)"])
 with tab1:
     st.warning("⚠️ **IMPORTANT**: Please ensure your files are in **.xlsx** format.")
     col1, col2 = st.columns(2)
-    with col1: 
+    with col1:
         sample_file = st.file_uploader("Upload SAMPLE File (.xlsx only)", type=['xlsx'], key="s_file")
-    with col2: 
+    with col2:
         blank_file = st.file_uploader("Upload BLANK File (.xlsx only)", type=['xlsx'], key="b_file")
 
     if sample_file and blank_file:
         try:
-            # Re-executing exact GOLD steps
-            h_s, df_s = run_strict_procedure(sample_file, q_threshold, area_threshold)
-            h_b, df_b = run_strict_procedure(blank_file, q_threshold, area_threshold)
+            # Re-executing exact GOLD steps (now also returns excluded)
+            h_s, df_s, df_s_excluded = run_strict_procedure(sample_file, q_threshold, area_threshold)
+            h_b, df_b, df_b_excluded = run_strict_procedure(blank_file, q_threshold, area_threshold)
 
             res_s = df_s.apply(lambda r: check_match_expert(r, df_b, rt_tolerance), axis=1)
             df_s['In_Blank'] = [x[0] for x in res_s]
@@ -99,14 +105,14 @@ with tab1:
             df_final = df_s[df_s['In_Blank'].isin(["NO", "RT_SHIFT_DETECTED"])].copy()
             total_sample, excluded, final_count = len(df_s), len(df_s[df_s['In_Blank'] == "YES"]), len(df_final)
             purity = (final_count / total_sample * 100) if total_sample > 0 else 0
-            
+
             st.subheader("Summary Metrics")
-            m1, m2, m3, m4 = st.columns(4)
+            m1, m2, m3, m4, m5 = st.columns(5)
             m1.metric("Total Sample Peaks", total_sample)
             m2.metric("Blank Matches (Purged)", excluded, delta=f"-{excluded}", delta_color="inverse")
             m3.metric("Final Unique Compounds", final_count)
             m4.metric(
-                label="Sample Purity Score", 
+                label="Sample Purity Score",
                 value=f"{purity:.1f}%",
                 help="""
             **Halal Integrity Metrics (Area-Weight)**
@@ -118,8 +124,10 @@ with tab1:
             (Σ Area of Clean Lipid Peaks / Total Original Peak Area) × 100
             """
             )
+            m5.metric("Blacklist Excluded (Sample)", len(df_s_excluded), delta=f"-{len(df_s_excluded)}", delta_color="inverse")
 
-            t1, t2, t3, t4 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. RT Analysis"])
+            t1, t2, t3, t4, t5 = st.tabs(["1. Solvent Blank", "2. Sample Mapping", "3. Final Fingerprint", "4. RT Analysis", "5. Excluded (Blacklist)"])
+
             with t1:
                 def highlight_blank(row):
                     styles = ['' for _ in row.index]
@@ -129,7 +137,7 @@ with tab1:
                         styles[rt_idx] = 'background-color: #002060; color: white'
                     return styles
                 st.dataframe(df_b.style.apply(highlight_blank, axis=1))
-            
+
             with t2:
                 def highlight_sample(row):
                     styles = ['' for _ in row.index]
@@ -139,14 +147,59 @@ with tab1:
                         styles[rt_idx] = 'background-color: #002060; color: white'
                     return styles
                 st.dataframe(df_s.style.apply(highlight_sample, axis=1))
-            
-            with t3: st.dataframe(df_final.drop(columns=['In_Blank', 'RT_Diff']))
+
+            with t3:
+                st.dataframe(df_final.drop(columns=['In_Blank', 'RT_Diff']))
+
             with t4:
                 rt_issues = df_s[df_s['In_Blank'] == "RT_SHIFT_DETECTED"]
                 if not rt_issues.empty:
                     st.info(f"Found **{len(rt_issues)}** compounds with significant RT shifts (>0.2). The compounds are retained.")
                     st.table(rt_issues[['Hit Name', 'RT (min)', 'RT_Diff']])
-                else: st.success("No significant RT shifts detected.")
+                else:
+                    st.success("No significant RT shifts detected.")
+
+            # --- NEW TAB 5: EXCLUDED BLACKLIST COMPOUNDS ---
+            with t5:
+                st.markdown("### ⛔ Excluded Compounds (Blacklist Artifacts)")
+                st.info(
+                    "These compounds were present in the **original raw data** but were automatically excluded "
+                    "because they matched known artifact/contaminant keywords (e.g. siloxane, phthalate, column bleed). "
+                    "They are shown here for full transparency and traceability."
+                )
+
+                col_ex1, col_ex2 = st.columns(2)
+
+                with col_ex1:
+                    st.markdown("#### Sample — Excluded Compounds")
+                    if df_s_excluded.empty:
+                        st.success("No blacklisted compounds found in Sample.")
+                    else:
+                        def highlight_excluded(row):
+                            return ['background-color: #FFD7D7' for _ in row.index]
+                        st.dataframe(df_s_excluded.style.apply(highlight_excluded, axis=1), use_container_width=True)
+                        st.caption(f"🔴 {len(df_s_excluded)} compound(s) excluded from Sample")
+
+                with col_ex2:
+                    st.markdown("#### Blank — Excluded Compounds")
+                    if df_b_excluded.empty:
+                        st.success("No blacklisted compounds found in Blank.")
+                    else:
+                        def highlight_excluded_b(row):
+                            return ['background-color: #FFD7D7' for _ in row.index]
+                        st.dataframe(df_b_excluded.style.apply(highlight_excluded_b, axis=1), use_container_width=True)
+                        st.caption(f"🔴 {len(df_b_excluded)} compound(s) excluded from Blank")
+
+                if not df_s_excluded.empty:
+                    st.markdown("---")
+                    st.markdown("#### Blacklist Keywords Matched (Sample)")
+                    blacklist_kw = ['siloxane', 'phthalate', 'octaxilonaxe', 'bleed', 'plasticizer', 'adipate', 'column bleed']
+                    summary_rows = []
+                    for _, row in df_s_excluded.iterrows():
+                        n = str(row['Hit Name']).lower()
+                        matched = [kw for kw in blacklist_kw if kw in n]
+                        summary_rows.append({'Hit Name': row['Hit Name'], 'RT (min)': row['RT (min)'], 'Area (%)': round(row['Area (%)'], 4), 'Matched Keyword': ', '.join(matched)})
+                    st.table(pd.DataFrame(summary_rows))
 
             st.markdown("---")
             custom_filename = st.text_input("📁 Rename your file before download", value="eg. SF-HEX-1", key="rename_s")
@@ -161,18 +214,31 @@ with tab1:
                 yellow_fmt = wb.add_format({'bg_color': '#FFEB9C', 'border': 1})
                 navy_fmt = wb.add_format({'bg_color': '#002060', 'font_color': 'white', 'border': 1})
                 pink_fmt = wb.add_format({'bg_color': '#FFC0CB', 'border': 1})
+                red_fmt = wb.add_format({'bg_color': '#FFD7D7', 'border': 1})
+                red_hdr_fmt = wb.add_format({'bold': True, 'font_size': 14, 'bg_color': '#C00000', 'font_color': 'white', 'border': 1, 'align': 'center'})
 
                 ws_dash = wb.add_worksheet('Dashboard')
                 ws_dash.merge_range('B2:E2', 'LIPID EQ ANALYTICAL SUMMARY', header_fmt)
-                metrics_list = [('Quality Threshold', q_threshold), ('RT Tolerance', rt_tolerance), ('Area Threshold', area_threshold), ('Final Biomarkers', final_count), ('Purity Score', f"{purity:.2f}%")]
+                metrics_list = [
+                    ('Quality Threshold', q_threshold),
+                    ('RT Tolerance', rt_tolerance),
+                    ('Area Threshold', area_threshold),
+                    ('Final Biomarkers', final_count),
+                    ('Purity Score', f"{purity:.2f}%"),
+                    ('Blacklist Excluded (Sample)', len(df_s_excluded)),
+                    ('Blacklist Excluded (Blank)', len(df_b_excluded)),
+                ]
                 for i, (l, v) in enumerate(metrics_list, start=4):
-                    ws_dash.write(f'B{i}', l, label_fmt); ws_dash.write(f'C{i}', v, val_fmt)
-                
-                ws_dash.write('B10', 'COLOR LEGEND / GUIDELINE:', wb.add_format({'bold': True, 'underline': True}))
-                ws_dash.write('B11', 'Yellow Row', yellow_fmt); ws_dash.write('C11', 'Matched in Blank/Sample (Shared Compound)')
-                ws_dash.write('B12', 'Blue RT Cell', navy_fmt); ws_dash.write('C12', 'RT Shift Detected (Retained)')
-                ws_dash.write('B13', 'Pink Cell', pink_fmt); ws_dash.write('C13', 'Potential contaminant/Unique compound')
-                ws_dash.set_column('B:B', 30); ws_dash.set_column('C:C', 85)
+                    ws_dash.write(f'B{i}', l, label_fmt)
+                    ws_dash.write(f'C{i}', v, val_fmt)
+
+                ws_dash.write('B12', 'COLOR LEGEND / GUIDELINE:', wb.add_format({'bold': True, 'underline': True}))
+                ws_dash.write('B13', 'Yellow Row', yellow_fmt); ws_dash.write('C13', 'Matched in Blank/Sample (Shared Compound)')
+                ws_dash.write('B14', 'Blue RT Cell', navy_fmt); ws_dash.write('C14', 'RT Shift Detected (Retained)')
+                ws_dash.write('B15', 'Pink Cell', pink_fmt); ws_dash.write('C15', 'Potential contaminant/Unique compound')
+                ws_dash.write('B16', 'Red Row', red_fmt); ws_dash.write('C16', 'Excluded Blacklist Artifact (Originally in Raw Data)')
+                ws_dash.set_column('B:B', 30)
+                ws_dash.set_column('C:C', 85)
 
                 rs = 'Analytical_Report'
                 h_b.to_excel(writer, sheet_name=rs, startrow=2, index=False, header=False)
@@ -181,7 +247,8 @@ with tab1:
                 h_s.to_excel(writer, sheet_name=rs, startrow=s2+1, index=False, header=False)
                 df_s.to_excel(writer, sheet_name=rs, startrow=s2+10, index=False, header=False)
                 s3 = s2 + len(df_s) + 15
-                fh = h_s.copy(); fh.iloc[0,0] = f"{fh.iloc[0,0]} (Clean Version ✅)"
+                fh = h_s.copy()
+                fh.iloc[0, 0] = f"{fh.iloc[0,0]} (Clean Version ✅)"
                 fh.to_excel(writer, sheet_name=rs, startrow=s3+1, index=False, header=False)
                 df_final.drop(columns=['In_Blank', 'RT_Diff']).to_excel(writer, sheet_name=rs, startrow=s3+10, index=False, header=False)
 
@@ -195,8 +262,43 @@ with tab1:
                 f_status_idx = df_final.columns.get_loc('Chemical_Status')
                 ws_rep.conditional_format(s3+10, f_status_idx, s3+10+len(df_final), f_status_idx, {'type': 'cell', 'criteria': 'equal to', 'value': '"Review (Potential Contaminant)"', 'format': pink_fmt})
 
+                # --- NEW EXCEL SHEET: EXCLUDED COMPOUNDS ---
+                ws_excl = wb.add_worksheet('Excluded_Compounds')
+                ws_excl.merge_range('A1:F1', '⛔ EXCLUDED BLACKLIST COMPOUNDS — Originally Present in Raw Data', red_hdr_fmt)
+                ws_excl.write('A2', 'NOTE: These compounds were detected in raw data but removed due to matching artifact/contaminant blacklist keywords.', wb.add_format({'italic': True, 'font_color': '#C00000'}))
+
+                # Sample excluded table
+                ws_excl.merge_range('A4:F4', 'SAMPLE — Excluded Compounds', wb.add_format({'bold': True, 'bg_color': '#FFD7D7', 'border': 1, 'align': 'center'}))
+                if not df_s_excluded.empty:
+                    # Write headers
+                    for col_idx, col_name in enumerate(df_s_excluded.columns):
+                        ws_excl.write(4, col_idx, col_name, label_fmt)
+                    for row_idx, (_, row) in enumerate(df_s_excluded.iterrows()):
+                        for col_idx, val in enumerate(row):
+                            ws_excl.write(5 + row_idx, col_idx, val, red_fmt)
+                    excl_end_row = 5 + len(df_s_excluded)
+                else:
+                    ws_excl.write(4, 0, 'No blacklisted compounds found in Sample.', wb.add_format({'italic': True}))
+                    excl_end_row = 6
+
+                # Blank excluded table
+                blank_excl_start = excl_end_row + 2
+                ws_excl.merge_range(blank_excl_start, 0, blank_excl_start, 5, 'BLANK — Excluded Compounds', wb.add_format({'bold': True, 'bg_color': '#FFD7D7', 'border': 1, 'align': 'center'}))
+                if not df_b_excluded.empty:
+                    for col_idx, col_name in enumerate(df_b_excluded.columns):
+                        ws_excl.write(blank_excl_start + 1, col_idx, col_name, label_fmt)
+                    for row_idx, (_, row) in enumerate(df_b_excluded.iterrows()):
+                        for col_idx, val in enumerate(row):
+                            ws_excl.write(blank_excl_start + 2 + row_idx, col_idx, val, red_fmt)
+                else:
+                    ws_excl.write(blank_excl_start + 1, 0, 'No blacklisted compounds found in Blank.', wb.add_format({'italic': True}))
+
+                ws_excl.set_column('A:A', 40)
+                ws_excl.set_column('B:F', 20)
+
             st.download_button(label=f"Download Report", data=output.getvalue(), file_name=final_save_name)
-        except Exception as e: st.error(f"Error: {e}")
+        except Exception as e:
+            st.error(f"Error: {e}")
 
 with tab2:
     st.header("Multiple Files for PCA")
@@ -205,15 +307,15 @@ with tab2:
 
     if m_blank and m_samples:
         try:
-            _, df_b_multi = run_strict_procedure(m_blank, q_threshold, area_threshold)
+            _, df_b_multi, _ = run_strict_procedure(m_blank, q_threshold, area_threshold)
             pca_list = []
             all_compounds = set()
 
             for s_f in m_samples:
-                _, df_s_raw = run_strict_procedure(s_f, q_threshold, area_threshold)
+                _, df_s_raw, _ = run_strict_procedure(s_f, q_threshold, area_threshold)
                 res = df_s_raw.apply(lambda r: check_match_expert(r, df_b_multi, rt_tolerance), axis=1)
                 df_clean = df_s_raw[res.apply(lambda x: x[0] in ["NO", "RT_SHIFT_DETECTED"])].copy()
-                
+
                 s_dict = {row['Hit Name']: row['Area (Ab*s)'] for _, row in df_clean.iterrows()}
                 s_dict['Sample Name'] = s_f.name
                 pca_list.append(s_dict)
@@ -224,9 +326,10 @@ with tab2:
             df_pca = df_pca.reindex(columns=cols).fillna(0)
             st.subheader("Ready for PCA Table (Raw Absorbance)")
             st.dataframe(df_pca)
-            
+
             pca_out = io.BytesIO()
             with pd.ExcelWriter(pca_out, engine='xlsxwriter') as writer:
                 df_pca.to_excel(writer, sheet_name='PCA_Data', index=False)
             st.download_button("Download PCA Matrix", data=pca_out.getvalue(), file_name="PCA_Matrix_Ready.xlsx")
-        except Exception as e: st.error(f"PCA Error: {e}")
+        except Exception as e:
+            st.error(f"PCA Error: {e}")
