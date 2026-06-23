@@ -7,6 +7,23 @@ from lib.theme import get_theme, apply_global_css, render_header
 from lib.sidebar import render_common_sidebar
 from lib.ui import section_header, info_banner
 
+
+def _safe_cell(val):
+    """xlsxwriter's write_number() raises on NaN/None unless the workbook
+    opts into 'nan_inf_to_errors'. Easier and cleaner to just blank out
+    missing values ourselves — RT_Diff / Matched_Blank_Type / etc. are
+    NaN for every compound that simply didn't match anything in the pool.
+    """
+    if val is None:
+        return ''
+    try:
+        if pd.isna(val):
+            return ''
+    except (TypeError, ValueError):
+        pass
+    return val
+
+
 if 'dark_mode' not in st.session_state:
     st.session_state.dark_mode = True
 
@@ -245,7 +262,7 @@ with tab1:
                         ws_rep.write(2, ci, cn, label_fmt)
                     for ri, (_, prow) in enumerate(pool_df.iterrows()):
                         for ci, val in enumerate(prow):
-                            ws_rep.write(3 + ri, ci, val, val_fmt)
+                            ws_rep.write(3 + ri, ci, _safe_cell(val), val_fmt)
                     pool_end = 3 + len(pool_df) + 2
                 else:
                     ws_rep.write(2, 0, 'Pool is empty.', note_fmt)
@@ -257,7 +274,7 @@ with tab1:
                     ws_rep.write(pool_end + 2, ci, cn, label_fmt)
                 for ri, (_, srow) in enumerate(df_s[sample_cols].iterrows()):
                     for ci, val in enumerate(srow):
-                        ws_rep.write(pool_end + 3 + ri, ci, val, val_fmt)
+                        ws_rep.write(pool_end + 3 + ri, ci, _safe_cell(val), val_fmt)
                 sample_start_data = pool_end + 3
                 sample_end = sample_start_data + len(df_s)
                 match_col_idx = sample_cols.index('Match_Status')
@@ -274,7 +291,7 @@ with tab1:
                     ws_rep.write(final_start, ci, cn, label_fmt)
                 for ri, (_, frow) in enumerate(df_final[final_cols2].iterrows()):
                     for ci, val in enumerate(frow):
-                        ws_rep.write(final_start + 1 + ri, ci, val, val_fmt)
+                        ws_rep.write(final_start + 1 + ri, ci, _safe_cell(val), val_fmt)
                 final_data_start = final_start + 1
                 final_data_end = final_data_start + len(df_final)
                 status_col_idx = final_cols2.index('Chemical_Status')
@@ -294,7 +311,7 @@ with tab1:
                         ws_excl.write(3, ci, cn, label_fmt)
                     for ri, (_, erow) in enumerate(df_s_excluded.iterrows()):
                         for ci, val in enumerate(erow):
-                            ws_excl.write(4 + ri, ci, val, red_fmt)
+                            ws_excl.write(4 + ri, ci, _safe_cell(val), red_fmt)
                 else:
                     ws_excl.write(3, 0, 'No blacklisted compounds found in Sample.', note_fmt)
                 ws_excl.set_column('A:A', 48); ws_excl.set_column('B:G', 18)
