@@ -35,7 +35,7 @@ render_header(T, subtitle="Pipeline")
 with st.sidebar:
     blacklist = render_common_sidebar(T)
     st.markdown(f"<div style='font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; color:{T['muted']}; margin-bottom:8px;'>⚙️ Analytical Controls</div>", unsafe_allow_html=True)
-    q_threshold = st.slider("NIST Quality Threshold", 50, 95, 80, 5,
+    q_threshold = st.slider("NIST Quality Threshold", 50, 0, 95, 80, 5,
         help="Filters compound identity accuracy. (Default: 80)")
     rt_tolerance = st.slider("RT Tolerance (min)", 0.01, 0.20, 0.05, 0.01,
         help="Time error limit when matching Sample peaks against the Blank Pool. (Default: 0.05)")
