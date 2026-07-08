@@ -21,7 +21,7 @@ with st.sidebar:
     blacklist = render_common_sidebar(T)
     st.markdown(f"<div style='font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; color:{T['muted']}; margin-bottom:8px;'>⚙️ Analytical Controls</div>", unsafe_allow_html=True)
     q_threshold = st.slider("NIST Quality Threshold", 50, 0, 95, 80, 5,
-        help="Filters compound identity accuracy. (Default: 80)")
+        help="Filters compound identity accuracy. (Default: 90)")
     rt_tolerance = st.slider("RT Tolerance (min)", 0.01, 0.20, 0.05, 0.01,
         help="Time error limit when matching Sample peaks against the Blank Pool. (Default: 0.05)")
     area_threshold = st.slider("Min Area % (Noise Filter)", 0.00, 5.00, 0.00, 0.01,
