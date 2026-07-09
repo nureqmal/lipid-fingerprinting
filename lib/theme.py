@@ -110,6 +110,16 @@ def apply_global_css(T):
 
     [data-testid="stSlider"] > div > div > div > div {{ background: {T['accent']} !important; }}
     [data-testid="stSlider"] label {{ color: {T['text']} !important; font-size: 0.82rem !important; font-weight: 500 !important; }}
+    [data-testid="stSlider"] input[type=number] {{
+        background: {T['bg3']} !important; color: {T['text']} !important;
+        border: 1px solid {T['border']} !important; border-radius: 6px !important;
+        font-family: 'Inter', sans-serif !important; font-size: 0.82rem !important;
+        outline: none !important; box-shadow: none !important;
+    }}
+    [data-testid="stSlider"] input[type=number]:focus {{
+        border-color: {T['accent']} !important;
+        box-shadow: none !important; outline: none !important;
+    }}
 
     [data-testid="stTextInput"] input {{
         background: {T['input_bg']} !important; border: 1px solid {T['border']} !important;
