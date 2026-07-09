@@ -24,7 +24,8 @@ DB_PATH = Path(__file__).resolve().parent.parent / "lipid_eq_data.db"
 BLANK_TYPES = ["Solvent", "Method", "Carryover", "Reagent"]
 
 DEFAULT_BLACKLIST = [
-    'siloxane', 'phthalate', 'octaxiloxane'
+    'siloxane', 'phthalate', 'octaxilonaxe', 'bleed', 'plasticizer',
+    'adipate', 'column bleed'
 ]
 
 

@@ -15,7 +15,7 @@ render_header(T, subtitle="Blank Library")
 with st.sidebar:
     blacklist = render_common_sidebar(T)
     st.markdown(f"<div style='font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; color:{T['muted']}; margin-bottom:8px;'>⚙️ Parsing Controls</div>", unsafe_allow_html=True)
-    q_threshold = st.slider("NIST Quality Threshold", 0, 100, 80, 1, key="lib_q",
+    q_threshold = st.slider("NIST Quality Threshold", 50, 95, 80, 5, key="lib_q",
         help="Same quality gate used when parsing this blank file.")
     area_threshold = st.slider("Min Area % (Noise Filter)", 0.00, 5.00, 0.00, 0.01, key="lib_area")
 
